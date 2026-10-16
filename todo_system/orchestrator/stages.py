@@ -1351,7 +1351,18 @@ def install_push_guard(repo_dir: Path) -> Path:
     reuse of a ~/Worker clone. `--git-path hooks` resolves correctly for both a
     plain repo and a linked worktree. Returns the hook path."""
     r = _git(repo_dir, "rev-parse", "--git-path", "hooks")
-    hooks_dir = Path(r.stdout.strip())
+    out = (r.stdout or "").strip() if r.returncode == 0 else ""
+    if not out:
+        # A failed/empty rev-parse made this Path("") → the hook landed at the repo
+        # ROOT as an untracked `pre-push` (seen in the live vault 2026-10-16 and then
+        # committed by a broad `git add -A`). Fall back to a plain repo's .git/hooks;
+        # anything else (a linked worktree's .git file) is skipped, never the root.
+        if (repo_dir / ".git").is_dir():
+            out = str(Path(".git") / "hooks")
+        else:
+            print(f"[stages] push guard not installed: cannot resolve hooks dir for {repo_dir}")
+            return repo_dir / ".git" / "hooks" / "pre-push"
+    hooks_dir = Path(out)
     if not hooks_dir.is_absolute():
         hooks_dir = repo_dir / hooks_dir
     hooks_dir.mkdir(parents=True, exist_ok=True)

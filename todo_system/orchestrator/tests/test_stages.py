@@ -4741,3 +4741,33 @@ class WorktreeBranchPrepIsolationTest(unittest.TestCase):
         again = repos.ensure_worktree(url, "slug-b", worker_root=self.wr, clone=True)
         self.assertEqual(again, wt)
         self.assertTrue((again / ".git").exists())
+
+
+class PushGuardEmptyHooksPathTest(unittest.TestCase):
+    """install_push_guard never writes `pre-push` at the repo root when
+    `git rev-parse --git-path hooks` fails or prints nothing (2026-10-16)."""
+
+    def _run(self, make_git_dir: bool, rc: int, stdout: str):
+        import subprocess
+        import tempfile
+        from unittest import mock
+        with tempfile.TemporaryDirectory() as d:
+            repo = Path(d)
+            if make_git_dir:
+                (repo / ".git").mkdir()
+            fake = subprocess.CompletedProcess(args=[], returncode=rc, stdout=stdout, stderr="")
+            with mock.patch.object(stages, "_git", return_value=fake):
+                hook = stages.install_push_guard(repo)
+            root_file = (repo / "pre-push").exists()
+            in_git = (repo / ".git" / "hooks" / "pre-push").exists()
+            return hook, root_file, in_git
+
+    def test_empty_output_with_git_dir_falls_back_to_dot_git_hooks(self):
+        hook, root_file, in_git = self._run(True, 0, "")
+        self.assertFalse(root_file)
+        self.assertTrue(in_git)
+
+    def test_failed_rev_parse_without_git_dir_writes_nothing(self):
+        hook, root_file, in_git = self._run(False, 128, "")
+        self.assertFalse(root_file)
+        self.assertFalse(in_git)
