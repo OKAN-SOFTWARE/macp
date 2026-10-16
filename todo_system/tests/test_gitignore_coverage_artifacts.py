@@ -48,3 +48,15 @@ def test_coverage_artifacts_not_tracked():
         or f == "coverage.xml"
     ]
     assert hits == [], f"already tracked, would be silently newly-ignored: {hits}"
+
+
+def test_export_gitignore_keeps_checkout_runtime_scratch_out():
+    """A checkout install writes beta locks / sweep state / gradle registry under
+    <engine>/Worker/_state (beta_publish._SCRATCH_ROOT); the exported repo's
+    .gitignore must keep them out of git, as the vault's does (2026-10-16 cutover)."""
+    from pathlib import Path
+    script = Path(__file__).resolve().parents[2] / "scripts" / "export_engine_tree.sh"
+    body = script.read_text(encoding="utf-8")
+    start = body.index("GITIGNORE_EOF")
+    end = body.index("GITIGNORE_EOF", start + 1)
+    assert "\nWorker/_state/\n" in body[start:end]
