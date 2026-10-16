@@ -1,12 +1,12 @@
 {
   "accounts": {
     "dev": {
-      "fetched_at": 1792149925.5503488,
-      "attempted_at": 1792149925.5503488,
+      "fetched_at": 1792150491.5678241,
+      "attempted_at": 1792150491.5678241,
       "usage": {
         "five_hour": {
           "utilization": 16.0,
-          "resets_at": "2026-10-16T14:09:59.803972+00:00",
+          "resets_at": "2026-10-16T14:09:59.756633+00:00",
           "limit_dollars": null,
           "used_dollars": null,
           "remaining_dollars": null,
@@ -14,7 +14,7 @@
         },
         "seven_day": {
           "utilization": 3.0,
-          "resets_at": "2026-10-18T04:59:59.803994+00:00",
+          "resets_at": "2026-10-18T04:59:59.756652+00:00",
           "limit_dollars": null,
           "used_dollars": null,
           "remaining_dollars": null,
@@ -61,7 +61,7 @@
             "group": "session",
             "percent": 16,
             "severity": "normal",
-            "resets_at": "2026-10-16T14:09:59.803972+00:00",
+            "resets_at": "2026-10-16T14:09:59.756633+00:00",
             "scope": null,
             "is_active": true
           },
@@ -70,7 +70,7 @@
             "group": "weekly",
             "percent": 3,
             "severity": "normal",
-            "resets_at": "2026-10-18T04:59:59.803994+00:00",
+            "resets_at": "2026-10-18T04:59:59.756652+00:00",
             "scope": null,
             "is_active": false
           },
@@ -110,8 +110,8 @@
         },
         "member_dashboard_available": false,
         "seven_day_breakdown": {
-          "as_of": "2026-10-16T11:25:25.846601+00:00",
-          "window_started_at": "2026-10-11T04:59:59.803994+00:00",
+          "as_of": "2026-10-16T11:34:51.795964+00:00",
+          "window_started_at": "2026-10-11T04:59:59.756652+00:00",
           "rows": [
             {
               "key": "claude_code",
@@ -154,8 +154,8 @@
           {
             "name": "session",
             "utilization": 16.0,
-            "resets_at": 1792159799.803972,
-            "elapsed_pct": 45.1,
+            "resets_at": 1792159799.756633,
+            "elapsed_pct": 48.3,
             "blocked": false,
             "reason": null,
             "blocked_until": null
@@ -163,14 +163,14 @@
           {
             "name": "weekly",
             "utilization": 3.0,
-            "resets_at": 1792299599.803994,
+            "resets_at": 1792299599.756652,
             "elapsed_pct": 75.3,
             "blocked": false,
             "reason": null,
             "blocked_until": null
           }
         ],
-        "checked_at": 1792149925.5503488
+        "checked_at": 1792150491.5678241
       }
     }
   }
