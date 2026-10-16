@@ -1,10 +1,10 @@
 {
   "accounts": {
     "dev": {
-      "attempted_at": 1792161317.683549,
-      "error": "HTTPError: HTTP Error 429: Too Many Requests",
+      "attempted_at": 1792161916.14549,
+      "error": "HTTPError: HTTP Error 401: Unauthorized",
       "fail_count": 1,
-      "next_retry_at": 1792161340.683549
+      "next_retry_at": 1792161976.14549
     }
   }
 }
