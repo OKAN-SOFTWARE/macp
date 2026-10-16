@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# macp — run the MaestroACP context CLI (`python -m todo_system.macp`, the
+# project/profile CLI) from ANY directory, so a native Claude Code session in any
+# project can register/update it. Resolves todo_system from the MaestroACP repo
+# via PYTHONPATH while keeping the caller's cwd (so find_project_root sees the
+# current project). Install: copy to a dir on PATH, e.g.
+# `cp scripts/macp ~/.local/bin/macp && chmod +x ~/.local/bin/macp`.
+#
+# DEVELOPMENT CHECKOUT ONLY. The wheel's console script is also called `macp`
+# but is a different program: `todo_system.cli:main`, the todo CLI
+# (pyproject.toml [project.scripts]). The two coexist by name on purpose (public
+# split 13a): an installed wheel puts only the console script on PATH — this
+# file ships under todo_system/_engine/scripts/, which is never on PATH — and
+# the project CLI there is `<venv>/bin/python -m todo_system.macp`. The
+# MACP_REPO / exec lines below are unchanged by that decision.
+MACP_REPO="${MACP_REPO:-$HOME/Projects/MaestroACP}"
+PY="$MACP_REPO/.venv/bin/python"
+[ -x "$PY" ] || PY="$(command -v python3 || command -v python)"
+exec env PYTHONPATH="$MACP_REPO${PYTHONPATH:+:$PYTHONPATH}" "$PY" -m todo_system.macp "$@"

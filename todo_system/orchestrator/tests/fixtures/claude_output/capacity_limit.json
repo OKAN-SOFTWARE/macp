@@ -1,0 +1,42 @@
+{
+ "provenance": {
+  "kind": "synthesized",
+  "from": "success.json (legs.text_sid transcript lines)",
+  "why": "a quota refusal cannot be triggered on demand; the transcript then holds only the CLI's own <synthetic> notice, so there is no usage to record, while the stage loop must still take its capacity branch unchanged",
+  "note": "stdout/stderr are illustrative, not captured CLI text",
+  "regenerate": "python3 todo_system/orchestrator/tests/fixtures/claude_output/synthesize.py"
+ },
+ "legs": {
+  "text": {
+   "argv_tail": [
+    "--model",
+    "claude-haiku-4-5-20251001",
+    "--max-turns",
+    "1"
+   ],
+   "rc": 1,
+   "stdout": "You're out of usage credits · resets 6pm\n",
+   "stderr": ""
+  },
+  "text_sid": {
+   "argv_tail": [
+    "--model",
+    "claude-haiku-4-5-20251001",
+    "--max-turns",
+    "1",
+    "--session-id",
+    "0a8b4f68-99bc-5ae4-8d30-0745ed7f1a10"
+   ],
+   "rc": 1,
+   "stdout": "You're out of usage credits · resets 6pm\n",
+   "stderr": "",
+   "session_id": "0a8b4f68-99bc-5ae4-8d30-0745ed7f1a10",
+   "transcript": [
+    "{\"type\":\"queue-operation\",\"operation\":\"enqueue\",\"timestamp\":\"2026-09-19T10:06:38.777Z\",\"sessionId\":\"0a8b4f68-99bc-5ae4-8d30-0745ed7f1a10\",\"content\":\"Reply with exactly MACP_FIXTURE_OK and nothing else.\"}",
+    "{\"type\":\"queue-operation\",\"operation\":\"dequeue\",\"timestamp\":\"2026-09-19T10:06:38.780Z\",\"sessionId\":\"0a8b4f68-99bc-5ae4-8d30-0745ed7f1a10\"}",
+    "{\"parentUuid\":null,\"isSidechain\":false,\"promptId\":\"aa31f951-6ab3-42ec-8948-ccf8bc60a91e\",\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"Reply with exactly MACP_FIXTURE_OK and nothing else.\"},\"uuid\":\"3ce3af08-3f2c-4626-94d0-a7e3230fc82d\",\"timestamp\":\"2026-09-19T10:06:40.203Z\",\"permissionMode\":\"default\",\"promptSource\":\"sdk\",\"turnOrigin\":\"sdk\",\"userType\":\"external\",\"entrypoint\":\"sdk-cli\",\"cwd\":\"/home/user/Projects/MaestroACP\",\"sessionId\":\"0a8b4f68-99bc-5ae4-8d30-0745ed7f1a10\",\"version\":\"2.1.277\",\"gitBranch\":\"worker/macp-pipeline-token-instrumentation\"}",
+    "{\"parentUuid\":\"468ba416-d8df-4705-a864-e81b8774c086\",\"isSidechain\":false,\"message\":{\"model\":\"<synthetic>\",\"id\":\"43274eb8-c77f-58ea-826a-f21d5d5ab7f0\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"You're out of usage credits · resets 6pm\"}],\"container\":null,\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":0,\"output_tokens\":0,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":0},\"input_transformations\":[],\"diagnostics\":null,\"context_management\":null},\"apiBlockIndex\":0,\"requestId\":\"req_011CfCcSN9uwPLs7gFwNfAYQ\",\"type\":\"assistant\",\"uuid\":\"445e7029-1c38-4906-bf78-19bdfb32b39d\",\"timestamp\":\"2026-09-19T10:06:41.236Z\",\"perTurnEffort\":null,\"userType\":\"external\",\"entrypoint\":\"sdk-cli\",\"cwd\":\"/home/user/Projects/MaestroACP\",\"sessionId\":\"0a8b4f68-99bc-5ae4-8d30-0745ed7f1a10\",\"version\":\"2.1.277\",\"gitBranch\":\"worker/macp-pipeline-token-instrumentation\",\"isApiErrorMessage\":true}"
+   ]
+  }
+ }
+}

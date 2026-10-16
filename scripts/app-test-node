@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# App test node (macp-app-test): an on-demand Android emulator host, separate from HQ.
+# n2-standard-4 spot + nested virtualization, normally STOPPED (disk only, ~$4/mo).
+# AVD api30 = android-30 google_apis x86_64, 1072x1448 @300dpi (Crema-like).
+#
+#   scripts/app-test-node start                # start VM, wait for ssh
+#   scripts/app-test-node shot <apk> [wait_s]  # boot emulator, install+launch, pull screenshot
+#   scripts/app-test-node ssh '<cmd>'          # run a command on the node
+#   scripts/app-test-node stop                 # stop VM (always do this when done)
+#
+# Screenshots land in ./app-test-shots/<pkg>-<ts>.png. A spot preemption stops the VM
+# (termination action STOP); `start` again and retry once.
+set -euo pipefail
+G=${GCLOUD:-/snap/bin/gcloud}
+NODE=${APP_TEST_NODE:-macp-app-test}
+ZONE=${APP_TEST_ZONE:-us-central1-a}
+OUT=${APP_TEST_OUT:-./app-test-shots}
+BOOT_TIMEOUT=${APP_TEST_BOOT_TIMEOUT:-400}
+POLL_INTERVAL=${APP_TEST_POLL_INTERVAL:-3}
+
+_ssh() { "$G" compute ssh "$NODE" --zone "$ZONE" --internal-ip --quiet --command "$1"; }
+_scp() { "$G" compute scp "$@" --zone "$ZONE" --internal-ip --quiet; }
+
+# A cold boot can keep an ssh channel open for 40s+; a transient drop (rc 255)
+# on any single short call should not fail the whole `shot`. Retry once.
+_ssh_retry() { _ssh "$1" || _ssh "$1"; }
+_scp_retry() { _scp "$@" || _scp "$@"; }
+
+cmd=${1:-}; shift || true
+case "$cmd" in
+  start)
+    "$G" compute instances start "$NODE" --zone "$ZONE" --quiet
+    for _ in $(seq 1 30); do _ssh true 2>/dev/null && { echo "ssh ready"; exit 0; }; sleep 5; done
+    echo "ssh not ready after 150s" >&2; exit 1 ;;
+  stop)
+    "$G" compute instances stop "$NODE" --zone "$ZONE" --quiet ;;
+  ssh)
+    _ssh "$1" ;;
+  shot)
+    apk=${1:?apk path}; wait_s=${2:-8}
+    _scp_retry "$apk" "$NODE:~/under-test.apk"
+
+    boot=$(_ssh_retry 'export ANDROID_SDK_ROOT=~/android
+      ~/android/platform-tools/adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r"') || boot=0
+    if [ "$boot" != 1 ]; then
+      # Fire-and-forget: setsid detaches from the ssh session's controlling
+      # terminal and the fds are fully redirected, so this call returns as
+      # soon as the fork happens — it does not hold the channel open while
+      # the emulator boots.
+      _ssh_retry 'export ANDROID_SDK_ROOT=~/android
+        setsid sg kvm -c "~/android/emulator/emulator -avd api30 -no-window -no-audio -no-snapshot-save -no-boot-anim -gpu swiftshader_indirect" </dev/null >~/emu.log 2>&1 &
+        disown'
+      t0=$(date +%s)
+      until [ "$boot" = 1 ]; do
+        sleep "$POLL_INTERVAL"
+        if [ $(( $(date +%s) - t0 )) -gt "$BOOT_TIMEOUT" ]; then
+          echo "boot timeout" >&2
+          _ssh_retry 'tail -20 ~/emu.log' >&2 || true
+          exit 1
+        fi
+        boot=$(_ssh_retry 'export ANDROID_SDK_ROOT=~/android
+          ~/android/platform-tools/adb shell getprop sys.boot_completed 2>/dev/null | tr -d "\r"') || boot=0
+      done
+    fi
+
+    pkg=$(_ssh_retry '~/android/build-tools/*/aapt2 dump packagename ~/under-test.apk | head -1')
+    _ssh_retry 'set -eo pipefail; export ANDROID_SDK_ROOT=~/android; A=~/android/platform-tools/adb
+      $A install -r ~/under-test.apk | tail -1
+      $A shell monkey -p "'"$pkg"'" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1
+      sleep '"$wait_s"'
+      $A exec-out screencap -p > ~/shot.png
+      echo "'"$pkg"'" > ~/shot.pkg'
+    mkdir -p "$OUT"
+    pkg=$(_ssh_retry 'cat ~/shot.pkg' | tr -d '\r')
+    dst="$OUT/$pkg-$(date +%Y%m%dT%H%M%S).png"
+    _scp_retry "$NODE:~/shot.png" "$dst"
+    echo "$dst" ;;
+  *)
+    sed -n '2,13p' "$0"; exit 2 ;;
+esac

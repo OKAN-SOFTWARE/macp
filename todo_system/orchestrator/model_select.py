@@ -1,0 +1,325 @@
+"""Resolve the Claude Code model for automated worker/planner runs.
+
+Models are chosen per **tier**, and a task's tier comes from how hard / what
+kind of work it is (`classify_tier`):
+
+    heavy    Fable 5.1 → Opus 5.5 → Opus 5 → Opus 4.8   architecture-level,
+                                             long, or explicitly hard tasks
+    standard Opus 5.5 → Opus 5 → Opus 4.8   the default for a normal
+                                             research→…→report pipeline
+    light    Sonnet 5 → Opus 5.5 → Opus 4.8 quick/trivial one-liners, short
+                                             estimates, delegate housekeeping
+
+Each ladder is walked top-down and the first model that actually runs wins
+(`resolve_model(tier=...)`). Before 2026-09-10 every stage of every task ran on
+the heavy ladder at `--effort max`; the tiers exist so Fable credits go to the
+tasks that need them and a 15-minute tag fix does not cost a Fable pipeline.
+
+Availability is probed with a minimal 1-turn `claude -p` call (including the
+`--effort` flag, so an effort incompatibility also trips the fallback) and cached
+for 24h per tier in `Worker/_state/model_pref.json`, so we never probe on every
+stage. Set the `WORKER_MODEL` env var to force one model for every tier and
+skip probing.
+
+Not replaceable by the CLI's own `--fallback-model`: that covers "overloaded or
+not available" only. Verified 2026-07-31 — with Fable 5 credits exhausted,
+`claude -p --model claude-fable-5 --fallback-model claude-opus-5` still returned
+the credits notice instead of falling back, so quota exhaustion needs this
+module's own probe.
+
+Runnable as a module — `python -m todo_system.orchestrator.model_select` prints
+the resolved model id (used by scripts/planner_tick.sh).
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import subprocess
+
+from .. import paths
+from ..claude_auth import claude_env
+import time
+
+PREFERRED = "claude-fable-5-1"
+# Tried in order. Opus 5.5 first (newest Opus tier), Opus 5 behind it in case
+# the 5.5 rollout is not on this account yet; Opus 4.8 as the floor.
+FALLBACKS = ("claude-opus-5-5", "claude-opus-5", "claude-opus-4-8")
+
+# Per-tier ladders, each walked top-down by resolve_model(tier=...). The heavy
+# ladder IS (PREFERRED, *FALLBACKS) — those two names stay exported because
+# scripts/claude_model_autoswitch.py and planner_tick.sh build on them.
+# Sonnet 5 was confirmed callable on this host on 2026-09-10 (1-turn probe).
+TIERS = ("heavy", "standard", "light")
+LADDERS: dict[str, tuple[str, ...]] = {
+    "heavy": (PREFERRED, *FALLBACKS),
+    "standard": ("claude-opus-5-5", "claude-opus-5", "claude-opus-4-8"),
+    "light": ("claude-sonnet-5", "claude-opus-5-5", "claude-opus-4-8"),
+}
+# `--effort` per tier. Only heavy keeps max. Effort levels are not comparable
+# across generations: Anthropic reports Opus 5.5 at `medium` matching or beating
+# Opus 5 at `high` on coding, and it thinks more per turn than Opus 5 at the same
+# level, so standard runs at high and light at medium. Raise a tier again only
+# when verify pass rates show a measured drop.
+TIER_EFFORT = {"heavy": "max", "standard": "high", "light": "medium"}
+# What a task gets when nothing about it says otherwise. The old behaviour was
+# heavy-for-everything; flip this back to "heavy" to restore it wholesale.
+DEFAULT_TIER = "standard"
+
+# Tag words that decide a tier outright (after an explicit `model_tier:`).
+_HEAVY_TAGS = frozenset({"hard", "complex", "heavy", "architecture"})
+_LIGHT_TAGS = frozenset({"trivial", "quick", "light", "chore"})
+# estimate_p90 thresholds, in minutes. A p90 at or under LIGHT is a light task,
+# at or over HEAVY a heavy one. The template default (p90 90m) lands in the
+# middle on purpose — it says nothing about difficulty.
+ESTIMATE_LIGHT_MAX_MIN = 45
+ESTIMATE_HEAVY_MIN_MIN = 240
+
+# Vault-data root. start= is paths.vault_search_start(): the engine root in a
+# checkout (byte-identical to the former parents[2] anchor), None in an
+# installed wheel so the cwd-upward search runs instead of a site-packages anchor.
+_ROOT = paths.vault_root(start=paths.vault_search_start())
+_CACHE = _ROOT / "Worker" / "_state" / "model_pref.json"
+_TTL = 24 * 3600
+
+
+# The CLI reports an exhausted quota on stdout and still exits 0, so the exit
+# code alone cannot tell "ran fine" from "refused to run". Observed 2026-07-31:
+# `claude -p ok --model claude-fable-5` printed "You're out of usage credits."
+# with rc=0, so _probe kept reporting Fable 5 as available, the fallback was
+# unreachable, and every pipeline stage died on research for hours.
+_UNAVAILABLE_MARKERS = (
+    "out of usage credits",
+    "usage limit",
+    "rate limit",
+    "insufficient credits",
+    # 2026-09-01: CLI rebrand message ("You've reached your Fable 5 limit. Run
+    # /usage-credits to continue…") matches none of the above — see the sibling
+    # list in stages._CAPACITY_MARKERS for the incident this caused.
+    "reached your",
+    "/usage-credits",
+)
+
+
+def model_unavailable(text: str) -> bool:
+    """True if `text` says the *selected model* cannot be used right now.
+
+    Deliberately narrower than `stages.is_capacity_limit()`, which also fires on
+    account-wide problems (`not logged in`, `please run /login`) and transient
+    load (`overloaded`). Those are not "pick a different model" signals — a
+    re-probe would just burn three more calls against the same wall.
+    """
+    t = (text or "").lower()
+    return any(mark in t for mark in _UNAVAILABLE_MARKERS)
+
+
+def _probe(model: str, effort: str = "max") -> bool:
+    """True if the claude CLI can actually run this model.
+
+    Requires exit 0 *and* output that isn't a quota refusal (see
+    `_UNAVAILABLE_MARKERS`).
+    """
+    try:
+        r = subprocess.run(
+            # probe with the effort the tier will actually run at (max unless a
+            # tier says otherwise) so an effort-level rejection also trips the
+            # fallback.
+            ["claude", "-p", "ok", "--model", model, "--effort", effort,
+             "--max-turns", "1"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=90,
+            # 스테이지와 같은 자격증명으로 프로브해야 판정이 일치한다 —
+            # 다른 토큰으로 재면 "모델 됨"이라 해놓고 실제 스테이지가 죽는다.
+            # claude_env()가 활성 계정(macp.config.current_account)의 config dir과
+            # automation-token을 해석하므로 프로브도 스테이지와 같은 계정으로 돈다.
+            env=claude_env(),
+        )
+        if r.returncode != 0:
+            return False
+        return not model_unavailable(f"{r.stdout or ''}\n{r.stderr or ''}")
+    except Exception:
+        return False
+
+
+def probe_model(model: str) -> bool:
+    """Public alias for `_probe` — one live 1-turn call, no cache, no fallback
+    walk. Exists so out-of-package callers (scripts/claude_model_autoswitch.py)
+    reuse this probe instead of reimplementing the rc=0-plus-quota-notice rule.
+    """
+    return _probe(model)
+
+
+def invalidate_cache() -> bool:
+    """Drop the cached model choice so the next `resolve_model()` re-probes
+    instead of waiting out the 24h TTL. True if a cache file was removed.
+
+    Best-effort by contract: never raises. It is called from the runner's stage
+    loop, where an invalidation failure must not take down a pipeline that is
+    otherwise fine — worst case the stale choice survives until the TTL. The
+    runner's account-rotation hook (`StagedExecutor._maybe_rotate_account`)
+    and `macp account use` call it too: the cache is account-agnostic, so a
+    model exhausted on one account must not stay cached as dead for the next.
+    """
+    try:
+        _CACHE.unlink()
+    except Exception:
+        return False    # already gone, or unremovable — either way nothing dropped
+    return True
+
+
+def invalidate_cache_if_unavailable(text: str) -> bool:
+    """Invalidate the cache only when `text` carries a model-unavailable signal.
+
+    The one-line entry point for callers holding raw stage output. Returns True
+    only when a cache file was actually removed.
+    """
+    return invalidate_cache() if model_unavailable(text) else False
+
+
+def _read_cache() -> dict:
+    try:
+        c = json.loads(_CACHE.read_text(encoding="utf-8"))
+        return c if isinstance(c, dict) else {}
+    except Exception:
+        return {}
+
+
+def _cached_model(tier: str, now: float) -> str | None:
+    """The tier's cached choice if it is still inside the TTL, else None.
+
+    The file has two layouts that must both keep working: the pre-tier
+    `{"model", "ts"}` (which the unblock playbook in memory still writes by
+    hand) is read as the heavy tier's entry; every tier also lives under
+    `tiers.<name>`, which is what new writes use."""
+    c = _read_cache()
+    entry = (c.get("tiers") or {}).get(tier)
+    if not isinstance(entry, dict) and tier == "heavy":
+        entry = c
+    if not isinstance(entry, dict):
+        return None
+    try:
+        if now - float(entry.get("ts", 0)) < _TTL and entry.get("model"):
+            return str(entry["model"])
+    except (TypeError, ValueError):
+        pass
+    return None
+
+
+def _store_model(tier: str, model: str, now: float) -> None:
+    """Write the tier's choice without clobbering the other tiers' entries.
+    The heavy choice is mirrored to the legacy top-level keys so anything that
+    still reads `model`/`ts` (tests, the memory playbook) sees the same value."""
+    try:
+        c = _read_cache()
+        tiers = c.get("tiers") if isinstance(c.get("tiers"), dict) else {}
+        tiers[tier] = {"model": model, "ts": now}
+        c["tiers"] = tiers
+        if tier == "heavy":
+            c["model"], c["ts"] = model, now
+        _CACHE.parent.mkdir(parents=True, exist_ok=True)
+        _CACHE.write_text(json.dumps(c), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def resolve_model(*, use_cache: bool = True, tier: str = "heavy") -> str:
+    """Return the first usable model id on `tier`'s ladder (default: the heavy
+    ladder — Fable 5, else down FALLBACKS — which is what the planner and every
+    pre-tier caller mean). WORKER_MODEL overrides every tier. The result is
+    cached per tier (24h) so this is cheap to call at import time. The last
+    rung is returned unprobed — if even that is unusable there is nothing
+    better to pick, and probing it only burns a call.
+    """
+    override = os.environ.get("WORKER_MODEL")
+    if override:
+        return override
+    if tier not in LADDERS:
+        tier = "heavy"
+    now = time.time()
+    if use_cache:
+        cached = _cached_model(tier, now)
+        if cached:
+            return cached
+    candidates = LADDERS[tier]
+    effort = TIER_EFFORT.get(tier, "max")
+    model = next((m for m in candidates[:-1] if _probe(m, effort)), candidates[-1])
+    _store_model(tier, model, now)
+    return model
+
+
+# --- task → tier classification --------------------------------------------
+
+_DURATION_RE = re.compile(r"(\d+(?:\.\d+)?)\s*([dhms])", re.I)
+
+
+def estimate_minutes(text) -> float | None:
+    """`estimate_p90`-style duration ("30m", "1h30m", "2h", "1d") in minutes.
+    None for anything unparsable, the '-' placeholder, or an empty value — a
+    bare number is *not* guessed at, it could be hours or minutes."""
+    if text is None:
+        return None
+    s = str(text).strip().lower()
+    if not s or s == "-":
+        return None
+    parts = _DURATION_RE.findall(s)
+    if not parts or "".join(f"{n}{u}" for n, u in parts) != re.sub(r"\s+", "", s):
+        return None
+    scale = {"d": 24 * 60, "h": 60, "m": 1, "s": 1 / 60}
+    return sum(float(n) * scale[u] for n, u in parts)
+
+
+def classify_tier(payload: dict | None) -> tuple[str, str]:
+    """Decide a task's model tier from its dispatch payload.
+
+    Returns `(tier, reason)` — the reason is a short human string the runner
+    logs, so a surprising choice can be traced to the field that made it.
+    Precedence, first hit wins:
+      1. `model_tier:` in frontmatter (heavy | standard | light) — the author's
+         explicit call. An unrecognised value is ignored, not honoured.
+      2. tags: hard/complex/heavy/architecture → heavy; trivial/quick/light/chore
+         → light.
+      3. worker_mode: quick → light (it already runs the one-call pipeline);
+         delegate → standard (research / update-the-task-file, no code).
+      4. estimate_p90: ≤ ESTIMATE_LIGHT_MAX_MIN → light, ≥ ESTIMATE_HEAVY_MIN_MIN
+         → heavy.
+      5. DEFAULT_TIER.
+    """
+    p = payload or {}
+    explicit = str(p.get("model_tier") or "").strip().lower()
+    if explicit in LADDERS:
+        return explicit, f"model_tier: {explicit}"
+    tags = {str(t).strip().lower() for t in (p.get("tags") or [])}
+    hit = sorted(tags & _HEAVY_TAGS)
+    if hit:
+        return "heavy", f"tag: {hit[0]}"
+    hit = sorted(tags & _LIGHT_TAGS)
+    if hit:
+        return "light", f"tag: {hit[0]}"
+    wm = str(p.get("worker_mode") or "").strip().lower()
+    if wm == "quick":
+        return "light", "worker_mode: quick"
+    if wm == "delegate":
+        return "standard", "worker_mode: delegate"
+    mins = estimate_minutes(p.get("estimate_p90"))
+    if mins is not None:
+        if mins <= ESTIMATE_LIGHT_MAX_MIN:
+            return "light", f"estimate_p90: {p.get('estimate_p90')}"
+        if mins >= ESTIMATE_HEAVY_MIN_MIN:
+            return "heavy", f"estimate_p90: {p.get('estimate_p90')}"
+        return DEFAULT_TIER, f"estimate_p90: {p.get('estimate_p90')} (mid-band)"
+    return DEFAULT_TIER, "default"
+
+
+def shift_tier(tier: str, steps: int) -> str:
+    """`tier` moved `steps` rungs toward light (positive) or heavy (negative),
+    clamped at the ends. Used for the stage-type dimension: a mechanical stage
+    (report) runs one notch below the task's tier."""
+    if tier not in TIERS:
+        tier = DEFAULT_TIER
+    i = min(max(TIERS.index(tier) + steps, 0), len(TIERS) - 1)
+    return TIERS[i]
+
+
+if __name__ == "__main__":
+    import sys
+    print(resolve_model(tier=sys.argv[1] if len(sys.argv) > 1 else "heavy"))

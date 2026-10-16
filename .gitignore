@@ -1,0 +1,24 @@
+# Python / uv 런타임
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# coverage 산출물 — test_gitignore_coverage_artifacts 가 이 4규칙을 요구한다.
+# 공개 리포 gitignore 갭(인벤토리 §11.8 c-2: htmlcov/·coverage.xml 누락)을 이
+# 재현 트리에서 사전 차단한다.
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+# 개발 체크아웃에 wheel 레이아웃 마커가 섞이면 paths.engine_root()가 설치본으로 오판한다
+# (test_gitignore_blocks_a_stray_engine_marker_in_the_checkout).
+todo_system/_engine/
+# 파생 캐시 · 실행 산출물
+Todo/todo.db
+standalone-junit.xml
+standalone.env
+# 자격증명·로컬 설정 — 엔진 체크아웃에서 실행하다 생겨도 커밋되지 않게(볼트 .secrets/ 와 같은 부류)
+.secrets/
+.env
+*.env
+.macp/

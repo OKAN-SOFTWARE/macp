@@ -1,0 +1,81 @@
+{
+ "provenance": {
+  "kind": "captured",
+  "captured_at": "2026-09-19T19:06:41+09:00",
+  "claude_version": "2.1.277 (Claude Code)",
+  "model": "claude-haiku-4-5-20251001",
+  "cwd": "vault root",
+  "prompt": "Reply with exactly MACP_FIXTURE_OK and nothing else.",
+  "leg_order": [
+   "json",
+   "text",
+   "text_sid"
+  ],
+  "transcript_lines_kept": {
+   "text_sid": "8/25",
+   "json": "8/25"
+  },
+  "regenerate": "python3 todo_system/orchestrator/tests/fixtures/claude_output/capture.py success"
+ },
+ "legs": {
+  "text": {
+   "argv_tail": [
+    "--model",
+    "claude-haiku-4-5-20251001",
+    "--max-turns",
+    "1"
+   ],
+   "rc": 0,
+   "stdout": "MACP_FIXTURE_OK\n",
+   "stderr": "Permission allow rule (../../.claude/settings.json): Write(//home/user/Projects/MaestroACP/.claude/commands/worker-*.md) is not matched by file permission checks — only Edit(path) rules are. Use Edit(//home/user/Projects/MaestroACP/.claude/commands/worker-*.md) instead (Edit rules cover all file-editing tools).\nPermission allow rule (.claude/settings.json): Write(.claude/commands/worker-*.md) is not matched by file permission checks — only Edit(path) rules are. Use Edit(.claude/commands/worker-*.md) instead (Edit rules cover all file-editing tools).\n"
+  },
+  "text_sid": {
+   "argv_tail": [
+    "--model",
+    "claude-haiku-4-5-20251001",
+    "--max-turns",
+    "1",
+    "--session-id",
+    "e35f35b4-ede9-476a-ae44-00c511dfa23c"
+   ],
+   "rc": 0,
+   "stdout": "MACP_FIXTURE_OK\n",
+   "stderr": "Permission allow rule (../../.claude/settings.json): Write(//home/user/Projects/MaestroACP/.claude/commands/worker-*.md) is not matched by file permission checks — only Edit(path) rules are. Use Edit(//home/user/Projects/MaestroACP/.claude/commands/worker-*.md) instead (Edit rules cover all file-editing tools).\nPermission allow rule (.claude/settings.json): Write(.claude/commands/worker-*.md) is not matched by file permission checks — only Edit(path) rules are. Use Edit(.claude/commands/worker-*.md) instead (Edit rules cover all file-editing tools).\n",
+   "session_id": "e35f35b4-ede9-476a-ae44-00c511dfa23c",
+   "transcript": [
+    "{\"type\":\"queue-operation\",\"operation\":\"enqueue\",\"timestamp\":\"2026-09-19T10:06:38.777Z\",\"sessionId\":\"e35f35b4-ede9-476a-ae44-00c511dfa23c\",\"content\":\"Reply with exactly MACP_FIXTURE_OK and nothing else.\"}",
+    "{\"type\":\"queue-operation\",\"operation\":\"dequeue\",\"timestamp\":\"2026-09-19T10:06:38.780Z\",\"sessionId\":\"e35f35b4-ede9-476a-ae44-00c511dfa23c\"}",
+    "{\"parentUuid\":null,\"isSidechain\":false,\"promptId\":\"aa31f951-6ab3-42ec-8948-ccf8bc60a91e\",\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"Reply with exactly MACP_FIXTURE_OK and nothing else.\"},\"uuid\":\"3ce3af08-3f2c-4626-94d0-a7e3230fc82d\",\"timestamp\":\"2026-09-19T10:06:40.203Z\",\"permissionMode\":\"default\",\"promptSource\":\"sdk\",\"turnOrigin\":\"sdk\",\"userType\":\"external\",\"entrypoint\":\"sdk-cli\",\"cwd\":\"/home/user/Projects/MaestroACP\",\"sessionId\":\"e35f35b4-ede9-476a-ae44-00c511dfa23c\",\"version\":\"2.1.277\",\"gitBranch\":\"worker/macp-pipeline-token-instrumentation\"}",
+    "{\"type\":\"last-prompt\",\"lastPrompt\":\"Reply with exactly MACP_FIXTURE_OK and nothing else.\",\"leafUuid\":\"468ba416-d8df-4705-a864-e81b8774c086\",\"sessionId\":\"e35f35b4-ede9-476a-ae44-00c511dfa23c\"}",
+    "{\"parentUuid\":\"468ba416-d8df-4705-a864-e81b8774c086\",\"isSidechain\":false,\"message\":{\"model\":\"claude-haiku-4-5-20251001\",\"id\":\"msg_011CfCcSNZDvaw9FyLrYZfxi\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"EqYDCrIBCBEYAipAwEJ6c5L6eebMuspIwt7RIKrSd2hB80cSa8weEJRovWZRqw9QnZXt8h4kbkc/d8mCrXUJHnqPDgtsS9YYkLYOTzIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okNGJiY2IxZDctMzRjMS00NTRhLWIwYmUtNGY4MmY4MzYwMDg1chBD+XkbUpN6egiKyTtVY7VyiAEBqAGxvbnVBrABAhIMy83Tm9J4YPs/NkNqGgwhIwuprzefVImrz84iMMifMf6GSD3JphQLbj7RjhBN8tAUecu12zgok+r8m238cBxSgVFi0MjoGgibYtuiECqgAZET4nxrIobfYM4IgIUzAVCIiQj9B0EGcOtwlCmpf649aXb5Gs8fmCYshITfFDV8vGyZCukVG3aQOzYHcX5BevuYpBMhnTExgIIwHv1Xi+nmHRz3ywsJDmUonuFADXZmQVlQYVuuy5/NYaBBPMLxvPPe2P3jrLueeDiZL1WavrvErxijkLFwfIro/ao3P3nUTDiRzdkvv2HoAtJqhqs1zWQYAQ==\"}],\"container\":null,\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":37104,\"output_tokens\":57,\"output_tokens_details\":{\"thinking_tokens\":43},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"not_available\",\"iterations\":[{\"input_tokens\":10,\"output_tokens\":57,\"cache_read_input_tokens\":37104,\"cache_creation_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":0},\"type\":\"message\"}],\"speed\":\"standard\"},\"input_transformations\":[],\"diagnostics\":null,\"context_management\":null},\"apiBlockIndex\":0,\"requestId\":\"req_011CfCcSN9uwPLs7gFwNfAYQ\",\"type\":\"assistant\",\"uuid\":\"445e7029-1c38-4906-bf78-19bdfb32b39d\",\"timestamp\":\"2026-09-19T10:06:41.236Z\",\"perTurnEffort\":null,\"userType\":\"external\",\"entrypoint\":\"sdk-cli\",\"cwd\":\"/home/user/Projects/MaestroACP\",\"sessionId\":\"e35f35b4-ede9-476a-ae44-00c511dfa23c\",\"version\":\"2.1.277\",\"gitBranch\":\"worker/macp-pipeline-token-instrumentation\"}",
+    "{\"parentUuid\":\"445e7029-1c38-4906-bf78-19bdfb32b39d\",\"isSidechain\":false,\"message\":{\"model\":\"claude-haiku-4-5-20251001\",\"id\":\"msg_011CfCcSNZDvaw9FyLrYZfxi\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"MACP_FIXTURE_OK\"}],\"container\":null,\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":37104,\"output_tokens\":57,\"output_tokens_details\":{\"thinking_tokens\":43},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"not_available\",\"iterations\":[{\"input_tokens\":10,\"output_tokens\":57,\"cache_read_input_tokens\":37104,\"cache_creation_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":0},\"type\":\"message\"}],\"speed\":\"standard\"},\"input_transformations\":[],\"diagnostics\":null,\"context_management\":null},\"apiBlockIndex\":1,\"requestId\":\"req_011CfCcSN9uwPLs7gFwNfAYQ\",\"type\":\"assistant\",\"uuid\":\"a1e0a537-5983-4c45-aa44-782254264f0d\",\"timestamp\":\"2026-09-19T10:06:41.297Z\",\"perTurnEffort\":null,\"userType\":\"external\",\"entrypoint\":\"sdk-cli\",\"cwd\":\"/home/user/Projects/MaestroACP\",\"sessionId\":\"e35f35b4-ede9-476a-ae44-00c511dfa23c\",\"version\":\"2.1.277\",\"gitBranch\":\"worker/macp-pipeline-token-instrumentation\"}",
+    "{\"type\":\"last-prompt\",\"lastPrompt\":\"Reply with exactly MACP_FIXTURE_OK and nothing else.\",\"leafUuid\":\"f2b01521-b7b0-4b4e-9f86-a453ea9967f3\",\"sessionId\":\"e35f35b4-ede9-476a-ae44-00c511dfa23c\"}",
+    "{\"type\":\"cost-state\",\"sessionId\":\"e35f35b4-ede9-476a-ae44-00c511dfa23c\",\"totalCostUSD\":0.0040054,\"totalAPIDuration\":1071,\"totalAPIDurationWithoutRetries\":1063,\"totalToolDuration\":0,\"totalLinesAdded\":0,\"totalLinesRemoved\":0,\"totalDuration\":3812,\"startTime\":1789812397561,\"modelUsage\":{\"claude-haiku-4-5-20251001\":{\"inputTokens\":10,\"outputTokens\":57,\"thinkingTokens\":43,\"cacheReadInputTokens\":37104,\"cacheCreationInputTokens\":0,\"webSearchRequests\":0,\"costUSD\":0.0040054}},\"hasUnknownModelCost\":false}"
+   ]
+  },
+  "json": {
+   "argv_tail": [
+    "--model",
+    "claude-haiku-4-5-20251001",
+    "--max-turns",
+    "1",
+    "--output-format",
+    "json"
+   ],
+   "rc": 0,
+   "stdout": "{\"duration_api_ms\":1019,\"stop_reason\":\"end_turn\",\"session_id\":\"f4deafd4-7a50-4086-bba7-2ab5cd31a118\",\"total_cost_usd\":0.0409331,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":19433,\"cache_read_input_tokens\":17671,\"output_tokens\":58,\"output_tokens_details\":{\"thinking_tokens\":44},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":19433,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"not_available\",\"iterations\":[{\"input_tokens\":10,\"output_tokens\":58,\"cache_read_input_tokens\":17671,\"cache_creation_input_tokens\":19433,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":19433},\"type\":\"message\"}],\"speed\":\"standard\"},\"modelUsage\":{\"claude-haiku-4-5-20251001\":{\"inputTokens\":10,\"outputTokens\":58,\"cacheReadInputTokens\":17671,\"cacheCreationInputTokens\":19433,\"webSearchRequests\":0,\"costUSD\":0.0409331,\"contextWindow\":200000,\"maxOutputTokens\":32000,\"thinkingTokens\":44,\"canonicalModel\":\"claude-haiku-4-5\",\"provider\":\"firstParty\",\"costBasis\":\"list\"}},\"permission_denials\":[],\"terminal_reason\":\"completed\",\"fast_mode_state\":\"off\",\"fast_mode_disabled_reason\":\"sdk_opt_in_required\",\"subagent_stats\":{\"spawned\":0,\"requested\":{\"background\":0,\"foreground\":0,\"unset\":0},\"started_in_background\":0,\"max_depth\":0,\"spawned_by_subagents\":0,\"completed\":0,\"failed\":0,\"killed\":{\"parent\":0,\"user\":0,\"system\":0},\"refused\":{\"depth_limit\":0,\"concurrency_limit\":0,\"budget\":0},\"by_type\":{}},\"is_error\":false,\"num_turns\":1,\"subtype\":\"success\",\"api_error_status\":null,\"result\":\"MACP_FIXTURE_OK\",\"ttft_ms\":1060,\"type\":\"result\",\"duration_ms\":1161,\"uuid\":\"e8d8786e-dabd-468f-b546-e17f193c83bd\",\"ttft_stream_ms\":626,\"time_to_request_ms\":138,\"first_content_frame_ms\":627,\"queued_turn_count\":0,\"result_index\":0}\n",
+   "stderr": "",
+   "session_id": "f4deafd4-7a50-4086-bba7-2ab5cd31a118",
+   "transcript": [
+    "{\"type\":\"queue-operation\",\"operation\":\"enqueue\",\"timestamp\":\"2026-09-19T10:06:31.430Z\",\"sessionId\":\"f4deafd4-7a50-4086-bba7-2ab5cd31a118\",\"content\":\"Reply with exactly MACP_FIXTURE_OK and nothing else.\"}",
+    "{\"type\":\"queue-operation\",\"operation\":\"dequeue\",\"timestamp\":\"2026-09-19T10:06:31.434Z\",\"sessionId\":\"f4deafd4-7a50-4086-bba7-2ab5cd31a118\"}",
+    "{\"parentUuid\":null,\"isSidechain\":false,\"promptId\":\"76566eee-5867-49df-a03c-2e83db68920c\",\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"Reply with exactly MACP_FIXTURE_OK and nothing else.\"},\"uuid\":\"4b5bbfa0-2435-4c76-9e1b-b73a85ab0b20\",\"timestamp\":\"2026-09-19T10:06:32.551Z\",\"permissionMode\":\"default\",\"promptSource\":\"sdk\",\"turnOrigin\":\"sdk\",\"userType\":\"external\",\"entrypoint\":\"sdk-cli\",\"cwd\":\"/home/user/Projects/MaestroACP\",\"sessionId\":\"f4deafd4-7a50-4086-bba7-2ab5cd31a118\",\"version\":\"2.1.277\",\"gitBranch\":\"worker/macp-pipeline-token-instrumentation\"}",
+    "{\"type\":\"last-prompt\",\"lastPrompt\":\"Reply with exactly MACP_FIXTURE_OK and nothing else.\",\"leafUuid\":\"f93d55e3-c32e-43fa-a032-7a77a543c4f4\",\"sessionId\":\"f4deafd4-7a50-4086-bba7-2ab5cd31a118\"}",
+    "{\"parentUuid\":\"f93d55e3-c32e-43fa-a032-7a77a543c4f4\",\"isSidechain\":false,\"message\":{\"model\":\"claude-haiku-4-5-20251001\",\"id\":\"msg_011CfCcRopz3cM1sgTFv4jJk\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"ErsDCrIBCBEYAipA57qASRUaOZ972Tn70GPZ3BJwESnyFfsL3ANX1Qtq8tPYxuWit0juJ9VjU2V1J8XP2sZiw2CDwZ43TzihEuDEjTIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okNGJiY2IxZDctMzRjMS00NTRhLWIwYmUtNGY4MmY4MzYwMDg1chBD+XkbUpN6egiKyTtVY7VyiAEBqAGpvbnVBrABAhIM57qjILr3qGJOKS5RGgyiW49vdYPWxZu7slEiMIeNj/jHZh//ts8yGrDoDe40nafSoGLKDG1MsiYaLFvzqMYE9MQ7ugEI7KuSmGA5vCq1AervrcYCJiHB2CkqMQ76MnleT/zWaD5+J44xlShDcFzWVasct7tcze+uFRA4bNkXO6BGvvjV8H85gPkC0t6FAtPjysIbWANpcnIhmtjgp/chRs5l0sZjvyn9kUh4OqZ6UvF2IM+pg0y2J+qfRY1SE1MZuUWQ/a/5qPvPPZguY4dNFMdGGUvQ6nX5usGKU9IwzKu7CgdLF4Fh15pbkKb+zSWc34ZH0R+x+EHdjtO6zvguEdBOQlAYAQ==\"}],\"container\":null,\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":19433,\"cache_read_input_tokens\":17671,\"output_tokens\":58,\"output_tokens_details\":{\"thinking_tokens\":44},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":19433,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"not_available\",\"iterations\":[{\"input_tokens\":10,\"output_tokens\":58,\"cache_read_input_tokens\":17671,\"cache_creation_input_tokens\":19433,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":19433},\"type\":\"message\"}],\"speed\":\"standard\"},\"input_transformations\":[],\"diagnostics\":null,\"context_management\":null},\"apiBlockIndex\":0,\"requestId\":\"req_011CfCcRoRfTqdfQGmUUwhXP\",\"type\":\"assistant\",\"uuid\":\"8ab2ed71-6975-4043-b999-a8112f6fe4e7\",\"timestamp\":\"2026-09-19T10:06:33.555Z\",\"perTurnEffort\":null,\"userType\":\"external\",\"entrypoint\":\"sdk-cli\",\"cwd\":\"/home/user/Projects/MaestroACP\",\"sessionId\":\"f4deafd4-7a50-4086-bba7-2ab5cd31a118\",\"version\":\"2.1.277\",\"gitBranch\":\"worker/macp-pipeline-token-instrumentation\"}",
+    "{\"parentUuid\":\"8ab2ed71-6975-4043-b999-a8112f6fe4e7\",\"isSidechain\":false,\"message\":{\"model\":\"claude-haiku-4-5-20251001\",\"id\":\"msg_011CfCcRopz3cM1sgTFv4jJk\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"MACP_FIXTURE_OK\"}],\"container\":null,\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":19433,\"cache_read_input_tokens\":17671,\"output_tokens\":58,\"output_tokens_details\":{\"thinking_tokens\":44},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":19433,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"not_available\",\"iterations\":[{\"input_tokens\":10,\"output_tokens\":58,\"cache_read_input_tokens\":17671,\"cache_creation_input_tokens\":19433,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":19433},\"type\":\"message\"}],\"speed\":\"standard\"},\"input_transformations\":[],\"diagnostics\":null,\"context_management\":null},\"apiBlockIndex\":1,\"requestId\":\"req_011CfCcRoRfTqdfQGmUUwhXP\",\"type\":\"assistant\",\"uuid\":\"47a11557-48ff-45aa-b420-45f60dd5b456\",\"timestamp\":\"2026-09-19T10:06:33.598Z\",\"perTurnEffort\":null,\"userType\":\"external\",\"entrypoint\":\"sdk-cli\",\"cwd\":\"/home/user/Projects/MaestroACP\",\"sessionId\":\"f4deafd4-7a50-4086-bba7-2ab5cd31a118\",\"version\":\"2.1.277\",\"gitBranch\":\"worker/macp-pipeline-token-instrumentation\"}",
+    "{\"type\":\"last-prompt\",\"lastPrompt\":\"Reply with exactly MACP_FIXTURE_OK and nothing else.\",\"leafUuid\":\"ea202ed3-cc7c-4e88-9b1d-cd6ca956e88e\",\"sessionId\":\"f4deafd4-7a50-4086-bba7-2ab5cd31a118\"}",
+    "{\"type\":\"cost-state\",\"sessionId\":\"f4deafd4-7a50-4086-bba7-2ab5cd31a118\",\"totalCostUSD\":0.0409331,\"totalAPIDuration\":1019,\"totalAPIDurationWithoutRetries\":1011,\"totalToolDuration\":0,\"totalLinesAdded\":0,\"totalLinesRemoved\":0,\"totalDuration\":3802,\"startTime\":1789812389871,\"modelUsage\":{\"claude-haiku-4-5-20251001\":{\"inputTokens\":10,\"outputTokens\":58,\"thinkingTokens\":44,\"cacheReadInputTokens\":17671,\"cacheCreationInputTokens\":19433,\"webSearchRequests\":0,\"costUSD\":0.0409331}},\"hasUnknownModelCost\":false}"
+   ]
+  }
+ }
+}

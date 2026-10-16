@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+# macp-browser — drive the HQ's logged-in Chrome (CLAUDE.md §12) from ANY
+# directory. Worker stages run in other repos' checkouts and their tool
+# whitelist splits on spaces, so a rule like `Bash(node ~/.config/...:*)` can
+# never match; this wrapper gives the whitelist a single space-free name:
+# `Bash(macp-browser:*)` (todo_system/orchestrator/stages.py BROWSER_TOOL_RULE).
+#
+# It runs only FIXED tools in the macp-browser folder: `browser.sh status|up`,
+# `console.mjs probe|steps`, `text.mjs`, `login-check.mjs`. Deliberately NOT
+# exposed (human-only): browser.sh start/stop/reset-vnc/vnc-off/chrome-off and
+# any other .mjs. Exit 64 = usage/rejected (nothing ran), 69 = tool missing on
+# this host; otherwise the tool's own exit code (login-check: 0 logged_in /
+# 1 logged_out / 2 no_chrome / 3 unknown).
+#
+# Lease: there is ONE Chrome profile (cookies, focus, dialogs) shared by
+# workers, interactive sessions and a human on VNC, so it is used by one owner
+# at a time through an advisory lease in "$DIR/lease.json" (0600, written
+# atomically under flock on "$DIR/lease.lock"). `lease acquire|release|status`
+# manage it; probe/steps/text exit 75 (EX_TEMPFAIL, nothing ran) while someone
+# else holds a live lease. The caller's owner is `--owner <id>` (before the
+# command) or MACP_BROWSER_OWNER. An expired lease counts as none.
+# status/up/login-check never look at the lease (login-check is the
+# browser_watch alert path). Exit 69 also covers a missing folder / flock.
+#
+# MACP_BROWSER_DIR / MACP_BROWSER_NODE mean the same as in
+# todo_system/browser_watch.py.
+# Install: copy to a dir on PATH, e.g.
+# `cp scripts/macp-browser ~/.local/bin/macp-browser && chmod +x ~/.local/bin/macp-browser`.
+DIR="${MACP_BROWSER_DIR:-$HOME/.config/macp-browser}"
+DIR="${DIR/#\~/$HOME}"
+NODE="${MACP_BROWSER_NODE:-node}"
+LEASE="$DIR/lease.json"
+LOCK="$DIR/lease.lock"
+OWNER="${MACP_BROWSER_OWNER:-}"
+
+usage() {
+  cat >&2 <<'EOF'
+usage: macp-browser [--owner <id>] <command>
+  status                    is the logged-in Chrome up?
+  up                        start Xvfb + Chrome if not running (no VNC)
+  login-check               one JSON line; exit 0 logged_in / 1 logged_out / 2 no_chrome / 3 unknown
+  probe <url>               dump visible inputs/buttons + last.png
+  steps <url> '<json>'      run click/fill/fillEmpty steps in order
+  text <url> [wait-ms]      innerText of the main frame and every iframe
+  lease status              one JSON line: state free|held, owner, purpose, expires_at
+  lease acquire --owner <id> [--purpose <text>] [--ttl <min,30>] [--wait <sec,0>]
+  lease release --owner <id>
+probe/steps/text exit 75 when someone else holds the lease; the owner is
+--owner or MACP_BROWSER_OWNER (characters A-Za-z0-9._:@-).
+start/stop/reset-vnc and other scripts are human-only (CLAUDE.md §12).
+EOF
+  exit "${1:-64}"
+}
+
+need() {
+  [ -f "$DIR/$1" ] || {
+    echo "macp-browser: $DIR/$1 not found (no logged-in browser on this host?)" >&2
+    exit 69
+  }
+}
+
+valid_owner() {
+  local re='^[A-Za-z0-9._:@-]{1,128}$'
+  [[ $1 =~ $re ]]
+}
+
+now() { date -u +%s; }
+
+iso() {
+  date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ
+}
+
+# JSON string body: control characters dropped, 200 characters, then \ and "
+# escaped (truncating after escaping could leave a lone backslash).
+json_escape() {
+  local s
+  s=$(printf '%s' "$1" | tr -d '\000-\037')
+  s=${s:0:200}
+  s=${s//\\/\\\\}
+  s=${s//\"/\\\"}
+  printf '%s' "$s"
+}
+
+# Sets L_OWNER L_PURPOSE (still JSON-escaped) L_ACQUIRED L_EXPIRES L_EPOCH and
+# returns 0 for a live lease; 1 for none, expired or unparseable. Unparseable
+# counts as free on purpose: the lease is advisory and only this wrapper writes
+# it (tmp + mv, never half a file), so a damaged file must not lock the browser
+# for good — the next acquire overwrites it.
+read_lease() {
+  L_OWNER='' L_PURPOSE='' L_ACQUIRED='' L_EXPIRES='' L_EPOCH=''
+  [ -f "$LEASE" ] || return 1
+  local raw
+  raw=$(<"$LEASE") 2>/dev/null || return 1
+  local re_owner='"owner":"([A-Za-z0-9._:@-]+)"'
+  local re_epoch='"expires_epoch":([0-9]{1,12})[,}]'
+  local re_acq='"acquired_at":"([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z)"'
+  local re_purpose='"purpose":"((\\.|[^"\\])*)"'
+  [[ $raw =~ $re_epoch ]] || return 1
+  [ "${BASH_REMATCH[1]}" -gt "$(now)" ] || return 1
+  L_EPOCH=${BASH_REMATCH[1]}
+  [[ $raw =~ $re_owner ]] || { L_EPOCH=''; return 1; }
+  L_OWNER=${BASH_REMATCH[1]}
+  L_EXPIRES=$(iso "$L_EPOCH")
+  [[ $raw =~ $re_acq ]] && L_ACQUIRED=${BASH_REMATCH[1]}
+  [[ $raw =~ $re_purpose ]] && L_PURPOSE=${BASH_REMATCH[1]}
+  return 0
+}
+
+leased_by_other() { read_lease && [ "$L_OWNER" != "$OWNER" ]; }
+
+refuse() {
+  echo "macp-browser: leased by $L_OWNER (purpose: ${L_PURPOSE:--}) until $L_EXPIRES; wait (lease acquire --wait) or ask the holder (CLAUDE.md §12)" >&2
+  exit 75
+}
+
+status_json() {
+  if read_lease; then
+    printf '{"state":"held","owner":"%s","purpose":"%s","expires_at":"%s"}\n' \
+      "$L_OWNER" "$L_PURPOSE" "$L_EXPIRES"
+  else
+    printf '{"state":"free","owner":null,"purpose":null,"expires_at":null}\n'
+  fi
+}
+
+lock() {
+  command -v flock >/dev/null 2>&1 || {
+    echo "macp-browser: flock not found (needed for lease acquire/release)" >&2
+    exit 69
+  }
+  exec 9>>"$LOCK"
+  chmod 600 "$LOCK" 2>/dev/null
+  flock -w 10 9 || { echo "macp-browser: lease lock busy" >&2; exit 75; }
+}
+
+unlock() { flock -u 9; }
+
+# write_lease <acquired_at> <escaped purpose>; caller holds the lock.
+write_lease() {
+  local tmp="$DIR/.lease.json.$$" e
+  e=$(( $(now) + 10#$TTL * 60 ))
+  (umask 077 && printf '{"owner":"%s","purpose":"%s","acquired_at":"%s","expires_at":"%s","expires_epoch":%s}\n' \
+    "$OWNER" "$2" "$1" "$(iso "$e")" "$e" >"$tmp") || exit 1
+  chmod 600 "$tmp" && mv -f "$tmp" "$LEASE" || exit 1
+}
+
+lease() {
+  local sub="${1:-}" seen='' purpose='' purpose_set='' deadline acquired
+  TTL=30 WAIT=0
+  [ $# -gt 0 ] && shift
+  while [ $# -gt 0 ]; do
+    [ $# -ge 2 ] || usage
+    case "$1" in
+      --owner) OWNER=$2 ;;
+      --purpose) purpose=$2; purpose_set=1 ;;
+      --ttl) TTL=$2 ;;
+      --wait) WAIT=$2 ;;
+      *) usage ;;
+    esac
+    seen="$seen $1"
+    shift 2
+  done
+  case "$sub" in
+    status)
+      [ -z "$seen" ] || usage ;;
+    release)
+      case "$seen" in *--purpose*|*--ttl*|*--wait*) usage ;; esac
+      valid_owner "$OWNER" || usage ;;
+    acquire)
+      valid_owner "$OWNER" || usage
+      [[ $TTL =~ ^[0-9]{1,5}$ ]] && [ $((10#$TTL)) -ge 1 ] && [ $((10#$TTL)) -le 1440 ] || usage
+      [[ $WAIT =~ ^[0-9]{1,5}$ ]] && [ $((10#$WAIT)) -le 3600 ] || usage ;;
+    *)
+      usage ;;
+  esac
+  [ -d "$DIR" ] || {
+    echo "macp-browser: $DIR not found (no logged-in browser on this host?)" >&2
+    exit 69
+  }
+  case "$sub" in
+    status)
+      status_json
+      exit 0 ;;
+    release)
+      lock
+      if leased_by_other; then unlock; refuse; fi
+      rm -f "$LEASE"
+      unlock
+      status_json
+      exit 0 ;;
+    acquire)
+      deadline=$(( $(now) + 10#$WAIT ))
+      while :; do
+        lock
+        if ! leased_by_other; then
+          # Free, expired or already ours: an own re-acquire only moves
+          # expires_at (and the purpose if a new one is given).
+          # read_lease leaves L_* empty unless the lease is live (= ours here).
+          acquired=${L_ACQUIRED:-$(iso "$(now)")}
+          if [ -n "$purpose_set" ]; then
+            purpose=$(json_escape "$purpose")
+          else
+            purpose=$L_PURPOSE
+          fi
+          write_lease "$acquired" "$purpose"
+          unlock
+          status_json
+          exit 0
+        fi
+        unlock
+        [ "$(now)" -lt "$deadline" ] || refuse
+        sleep 1
+      done ;;
+  esac
+}
+
+if [ "${1:-}" = "--owner" ]; then
+  [ $# -ge 2 ] || usage
+  OWNER=$2
+  shift 2
+  valid_owner "$OWNER" || usage
+fi
+
+cmd="${1:-}"
+[ $# -gt 0 ] && shift
+case "$cmd" in
+  status|up)
+    [ $# -eq 0 ] || usage
+    need browser.sh
+    exec bash "$DIR/browser.sh" "$cmd" ;;
+  probe)
+    [ $# -eq 1 ] || usage
+    need console.mjs
+    leased_by_other && refuse
+    exec "$NODE" "$DIR/console.mjs" probe "$1" ;;
+  steps)
+    [ $# -eq 2 ] || usage
+    need console.mjs
+    leased_by_other && refuse
+    exec "$NODE" "$DIR/console.mjs" steps "$1" "$2" ;;
+  text)
+    { [ $# -eq 1 ] || { [ $# -eq 2 ] && [[ $2 =~ ^[0-9]+$ ]]; }; } || usage
+    need text.mjs
+    leased_by_other && refuse
+    exec "$NODE" "$DIR/text.mjs" "$@" ;;
+  lease)
+    lease "$@" ;;
+  login-check)
+    [ $# -eq 0 ] || usage
+    need login-check.mjs
+    exec "$NODE" "$DIR/login-check.mjs" ;;
+  -h|--help|help)
+    usage 0 ;;
+  *)
+    usage ;;
+esac

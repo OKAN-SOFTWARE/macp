@@ -1,0 +1,36 @@
+# public_export_exclude.txt — 공개 export 집합에서 빼는 엔진 트리 파일 (공개 분리 9)
+#
+# 용도: `bash scripts/check_public_identifiers.sh --export` 가 엔진 트리 3경로
+#   (todo_system · scripts · .claude/commands)에서 이 목록의 파일을 빼고 개인 식별자가
+#   절대 0인지 본다. 여기 올라간 파일은 "볼트로 옮길 것"으로 판정된 운영·개인 자산이다.
+# 형식: 한 줄에 리포 상대 경로 하나. `#` 이후는 주석. 빈 줄 무시.
+#   글롭(`*` `?` `[`) 금지 — 게이트가 exit 2 로 거부한다. 파일 단위로만 뺀다.
+# 원칙:
+#   - 엔진 코어(todo_system/cli.py 등)는 올리지 않는다. 식별자를 없애야지 가리면 은폐다.
+#   - 이 파일 자신은 export 집합 안에 남는다 — 주석에 식별자 문자열을 쓰지 않는다.
+#   - 물리 이동은 부모 7단계 몫이다. 옮긴 뒤에는 해당 줄을 지운다
+#     (라이브 LaunchAgent/systemd 가 원격조종 스크립트 경로를 직접 가리키므로 지금은 제자리).
+# 판정 근거: Notes/macp-public-split-inventory.md §5.3 판정표, §5.4 원격조종 스택,
+#   §10 공개 export 집합. 사용자 결정 2026-09-26: 원격조종 스택 → 볼트.
+
+# --- 원격조종 스택 (§5.4, 결정: 볼트 2026-09-26) — 개인 머신·계정 전용 운영 도구 ---
+scripts/REMOTE_CONTROL_SETUP.md                          # 원격조종 운영 런북: 개인 머신 이름·데몬 라벨·복구 이력
+scripts/claude_remote_control.sh                         # 원격조종 LaunchAgent 런처: 개인 세션 이름 기본값
+scripts/claude_remote_control_watchdog.py                # 원격조종 워치독: 개인 라벨·세션 사고 이력 docstring
+scripts/claude_upgrade.py                                # CLI 자동 업그레이더: 원격조종 라벨 재기동 결합
+scripts/install_remote_control_launchagent.sh            # 원격조종 LaunchAgent 설치기: 개인 라벨 4종
+scripts/remote-control-windows/wsl-claude-prompt.md      # Windows/WSL 원격조종 설치 프롬프트: 윈도 사용자 경로 예시
+todo_system/tests/test_claude_remote_control_watchdog.py # 워치독 테스트: 실제 캡처한 개인 상태줄 픽스처
+todo_system/tests/test_claude_upgrade.py                 # CLI 업그레이더 테스트: 짝 scripts/claude_upgrade.py 가 이미 목록에 있고 원격조종 스택과 함께 7단계 볼트 이동 (선례: test_claude_remote_control_watchdog.py). 공개 분리 10: export 트리에서 수집 에러 제거
+
+# --- 원격조종 스택 Windows 3종 (§5.4, 히트 없음) — 스택 단위로 함께 이동 ---
+scripts/remote-control-windows/README.md                 # Windows 원격조종 안내: 스택 일부
+scripts/remote-control-windows/Setup-ClaudeRemoteControl.ps1  # Windows 원격조종 설치 스크립트: 스택 일부
+scripts/remote-control-windows/windows-claude-prompt.md  # Windows 원격조종 설치 프롬프트: 스택 일부
+
+# --- §5.3 '볼트 이동' 판정 엔진 트리 파일 ---
+scripts/CUTOVER.md                                       # v2 컷오버 운영 이력: 라이브 데몬 라벨·롤백 절차
+scripts/build_resume_pdf.sh                              # 개인 이력서 PDF 빌드: 엔진과 무관한 개인 자산
+
+# --- 2026-10-16 공개 위생 점검 — 개인 GCP 프로젝트·VM 이름을 기본값으로 둔 운영 스크립트 ---
+scripts/push_advote_secret.sh                            # 맥→본부 VM 자격증명 전송: 개인 VM·프로젝트 이름 기본값

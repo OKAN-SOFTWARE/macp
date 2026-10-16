@@ -1,0 +1,68 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "macp"
+version = "0.1.0"
+description = "MaestroACP engine — SQLite-backed todo management with markdown sync, worker pipeline and orchestrator"
+requires-python = ">=3.12"
+dependencies = [
+	"google-api-python-client>=2.170.0",
+	"google-auth>=2.40.0",
+	"google-auth-oauthlib>=1.2.2",
+	"pyyaml>=6.0",   # orchestrator registry (Mac-side; transport stays stdlib-only)
+]
+
+[project.scripts]
+# Console script `macp` = the todo CLI (todo_system.cli:main). The bash wrapper
+# scripts/macp has the same name but is a DIFFERENT program — it runs
+# `python -m todo_system.macp` (the project/profile CLI) from a development
+# checkout and exists only there (public split 13a, coexistence decision).
+# An installed wheel puts only this console script on PATH: the wrapper ships
+# inside todo_system/_engine/scripts/, which is never on PATH, and the project
+# CLI is reached as `<venv>/bin/python -m todo_system.macp`.
+macp = "todo_system.cli:main"
+
+[tool.uv]
+# Installable engine (public split, P1): `uv run` installs this project editable
+# into .venv; the import name stays `todo_system`, the distribution is `macp`.
+package = true
+
+[tool.hatch.build.targets.wheel]
+# Distribution name (macp) != import package (todo_system): hatchling cannot
+# auto-detect the package, so name it.
+packages = ["todo_system"]
+
+[tool.hatch.build.targets.wheel.force-include]
+# Engine files the code reads beside itself (paths.engine_root()). Mirrored in
+# repo layout so shell scripts' `$(dirname "$0")/..` math holds when installed.
+# The target directory doubles as the layout marker: paths.is_installed() is
+# "todo_system/_engine/ exists inside the package", so a checkout must never
+# carry one (.gitignore blocks it). Entry point for the scripts in both layouts:
+# `python -m todo_system.engine_script <name> [args...]`.
+# Execute bits: *.sh ship as 0755 because their git mode is 100755 — hatchling's
+# reproducible builds normalise file modes to 644/755 from the source tree's
+# exec bit, sdist → wheel, so no build hook is needed.
+# todo_system/tests/test_installed_wheel_smoke_13a.py pins the wheel's 0755.
+"scripts" = "todo_system/_engine/scripts"
+".claude/commands" = "todo_system/_engine/.claude/commands"
+
+[tool.hatch.build.targets.sdist]
+# `uv build` builds the wheel FROM the sdist, so the force-include sources must
+# be in it — and nothing else: this file lives in a vault checkout whose
+# Todo/ Memory/ Worker/ .macp/ trees must never be swept into an archive.
+only-include = ["todo_system", "scripts", ".claude/commands", "pyproject.toml"]
+
+[tool.ruff]
+# Notes/ holds one-off analysis scripts kept for reproducibility (e.g. the
+# news-decider oracle ceiling test), not shipped source — they are deliberately
+# terse and are not held to the package's lint bar.
+exclude = ["Notes", ".venv"]
+
+[tool.ruff.lint]
+# Pin the rule set explicitly: CI installs the latest ruff, whose defaults have
+# drifted across majors (an unpinned run flagged BLE/DTZ/S rules the codebase
+# was never written against and turned PR #24's CI red on style grounds).
+# pycodestyle errors + pyflakes — the classic baseline this repo is clean under.
+select = ["E4", "E7", "E9", "F"]

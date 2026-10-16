@@ -1,0 +1,37 @@
+{
+ "provenance": {
+  "kind": "synthesized",
+  "from": "success.json (legs.text_sid transcript lines)",
+  "why": "a CLI that dies before starting a session writes no transcript",
+  "note": "stdout/stderr are illustrative, not captured CLI text",
+  "regenerate": "python3 todo_system/orchestrator/tests/fixtures/claude_output/synthesize.py"
+ },
+ "legs": {
+  "text": {
+   "argv_tail": [
+    "--model",
+    "claude-haiku-4-5-20251001",
+    "--max-turns",
+    "1"
+   ],
+   "rc": 1,
+   "stdout": "",
+   "stderr": "Error: illustrative CLI failure before any session\n"
+  },
+  "text_sid": {
+   "argv_tail": [
+    "--model",
+    "claude-haiku-4-5-20251001",
+    "--max-turns",
+    "1",
+    "--session-id",
+    "9fc7b07e-8ea3-5099-9926-2f64a090c09f"
+   ],
+   "rc": 1,
+   "stdout": "",
+   "stderr": "Error: illustrative CLI failure before any session\n",
+   "session_id": "9fc7b07e-8ea3-5099-9926-2f64a090c09f",
+   "transcript": null
+  }
+ }
+}

@@ -1,0 +1,24 @@
+# Anonymous sample registry for engine contract tests.
+#
+# Ships in the public engine repo — it carries NO live vault data and NO
+# personal identifiers, so the registry contract can be exercised without the
+# private Worker/agents/registry.yaml. It covers, on purpose:
+#   - kind: human vs ai-local (Agent.is_human)
+#   - glob routing:  demo-beta  -> primary-human (via demo-*)
+#   - exact beats glob:  demo-alpha -> demo-worker (exact wins over demo-*)
+#   - unowned project: no agent matches -> None
+#   - notify channels present
+#   - id uniqueness
+# Keep the last line a plain agent field (no trailing comment): the catch-all
+# test appends a worker-default entry by string concatenation.
+agents:
+  - id: primary-human
+    kind: human
+    projects: [demo-*]
+    notify: [chat]
+    sla: none
+  - id: demo-worker
+    kind: ai-local
+    projects: [demo-alpha]
+    notify: [chat]
+    capabilities: [general]

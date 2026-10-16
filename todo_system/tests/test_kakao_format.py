@@ -1,0 +1,173 @@
+"""Unit tests for the self-limiting kakao memo formatter (stdlib leaf module).
+
+These are pure-function tests — no subprocess, no network, no real Kakao send —
+so they can never reach the real alert channel ([[tests-reach-real-alert-sender]]).
+The worst-input fixtures use the 2026-09-16 19:42 real example: a task whose
+`blocked_on` is a few hundred chars of English, which is exactly what used to be
+blind-cut mid-sentence at 179.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from todo_system import kakao_format, paths
+from todo_system.kakao_format import (
+    KAKAO_TEXT_LIMIT,
+    clip_words,
+    compose_alert,
+)
+
+# The 2026-09-16 19:42 [검토요청] macp-dashboard-public-access blocker, verbatim.
+BLOCKER_1942 = (
+    "AC4/AC5 need a human on macp-hq: sudo-enable Tailscale Funnel (operator/sudo "
+    "required — a forbidden hard rule, and tailscale is not in the verify whitelist), "
+    "then from the phone with Tailscale OFF confirm the dashboard 401s without a token "
+    "and 200s with one."
+)
+LONG_PR_URL = "https://github.com/example-org/MaestroACP/pull/123456"
+
+
+# ---------------------------------------------------------------- clip_words
+
+
+def test_clip_words_returns_short_text_unchanged():
+    assert clip_words("짧은 메모", KAKAO_TEXT_LIMIT) == "짧은 메모"
+
+
+def test_clip_words_collapses_newlines_and_runs_to_single_spaces():
+    assert clip_words("a\n\nb   c", KAKAO_TEXT_LIMIT) == "a b c"
+
+
+def test_clip_words_marks_the_cut_and_never_exceeds_budget():
+    out = clip_words(BLOCKER_1942, 60)
+    assert len(out) <= 60
+    assert out.endswith("…")
+
+
+def test_clip_words_cuts_on_a_word_boundary_not_mid_token():
+    # Budget lands inside "whitelist"; the whole partial word must be dropped, so
+    # the result is a prefix made of WHOLE words from the source plus the ellipsis.
+    out = clip_words(BLOCKER_1942, 80)
+    body = out[:-1]  # drop the trailing ellipsis
+    source_words = BLOCKER_1942.split()
+    kept = body.split()
+    assert kept == source_words[: len(kept)]  # every kept word is intact & in order
+
+
+def test_clip_words_hard_cuts_a_single_overlong_word_but_still_marks_it():
+    out = clip_words("a" * 300, 40)
+    assert len(out) == 40
+    assert out == "a" * 39 + "…"
+
+
+def test_clip_words_non_positive_budget_is_empty():
+    assert clip_words("anything", 0) == ""
+    assert clip_words("anything", -5) == ""
+
+
+# ---------------------------------------------------------------- compose_alert
+
+
+def test_compose_alert_headline_only_survives_whole():
+    head = "🔴 검토 필요 — 리뷰 후 머지해주세요"
+    assert compose_alert(head) == head
+
+
+def test_compose_alert_drops_a_whole_line_that_would_overflow_rather_than_cut():
+    head = "🔴 검토 필요 — 리뷰 후 머지해주세요"
+    fits = "📋 macp-dashboard-public-access"
+    overflow = "x" * KAKAO_TEXT_LIMIT  # cannot fit next to the headline
+    out = compose_alert(head, [fits, overflow])
+    assert fits in out
+    assert overflow not in out          # dropped entirely — never bisected
+    assert len(out) <= KAKAO_TEXT_LIMIT
+
+
+def test_compose_alert_worst_input_stays_within_budget_and_keeps_the_action():
+    head = "⛔ 파이프라인이 선행 조건 미충족으로 멈췄어요 — 조건을 갖추거나 태스크를 접을지 판단해주세요"
+    out = compose_alert(head, ["📋 macp-dashboard-public-access"], tail=BLOCKER_1942)
+    assert len(out) <= KAKAO_TEXT_LIMIT
+    assert out.startswith(head)         # the actionable headline is intact
+    assert out.splitlines()[0] == head
+
+
+def test_compose_alert_tail_is_clipped_to_the_remaining_budget_not_dropped():
+    head = "❗짧은 머리글"
+    # BLOCKER_1942 (~300 chars) now fits whole inside the 4000-char budget, so to
+    # still exercise the clip-not-drop behaviour the tail must exceed the budget.
+    long_tail = " ".join([BLOCKER_1942] * 30)  # ~9k chars, well over KAKAO_TEXT_LIMIT
+    out = compose_alert(head, tail=long_tail)
+    assert len(out) <= KAKAO_TEXT_LIMIT
+    # There was room, so some of the tail rode along (clipped, marked).
+    assert out != head
+    assert out.endswith("…")
+
+
+def test_compose_alert_a_url_placed_whole_is_never_split():
+    head = "✅ PR 열림(미머지) — 리뷰 후 머지해주세요"
+    out = compose_alert(head, [f"🔗 {LONG_PR_URL}"])
+    assert LONG_PR_URL in out           # present in one piece
+    assert len(out) <= KAKAO_TEXT_LIMIT
+
+
+# ---------------------------------------------------------------- _vault_root
+# _vault_root() anchors route()'s state files. KAKAO_VAULT_DIR is the top-priority
+# test seam kakao_send.sh also honours; the production fallback now flows through
+# the shared paths.vault_root resolver (public-split follow-up) instead of a
+# hard-coded Path(__file__).resolve().parents[1].
+#
+# conftest._kakao_isolated is AUTOUSE and sets KAKAO_VAULT_DIR for every test, so
+# the fallback / MACP-redirect cases MUST delenv it first or the early return makes
+# them pass vacuously (the `else` branch never runs).
+
+
+# byte-identity to parents[1] holds only in the combined vault layout (a
+# .macp/config.toml marker at the repo root); an engine-only export tree has no
+# marker and the shared resolver raises by design, so this case skips there
+# (public-split-10 AC2 vault-only / AC4). The live vault has the marker and runs it.
+_vault_only_byte_identity = pytest.mark.skipif(
+    not (Path(paths.__file__).resolve().parents[1] / ".macp" / "config.toml").is_file(),
+    reason="vault-only: byte-identity holds only in the combined vault layout "
+           "(.macp/config.toml at the repo root); the engine-only export tree has no marker.",
+)
+
+
+@_vault_only_byte_identity
+def test_vault_root_falls_back_to_shared_resolver_when_all_env_unset(monkeypatch):
+    monkeypatch.delenv("KAKAO_VAULT_DIR", raising=False)
+    monkeypatch.delenv("MACP_VAULT_ROOT", raising=False)
+    install = Path(kakao_format.__file__).resolve().parents[1]
+    # Byte-identical to the old parents[1], and proven to go through the shared
+    # resolver rather than any private computation.
+    assert kakao_format._vault_root() == install
+    assert kakao_format._vault_root() == paths.vault_root(start=install)
+    assert (install / "todo_system" / "kakao_format.py").is_file()  # a real root
+
+
+def test_vault_root_fallback_honours_macp_vault_root(monkeypatch, tmp_path):
+    monkeypatch.delenv("KAKAO_VAULT_DIR", raising=False)
+    monkeypatch.setenv("MACP_VAULT_ROOT", str(tmp_path))
+    # KAKAO_VAULT_DIR unset → the fallback consults the resolver, which honours
+    # MACP_VAULT_ROOT (AC a).
+    assert kakao_format._vault_root() == tmp_path
+
+
+def test_kakao_vault_dir_wins_over_macp_vault_root(monkeypatch, tmp_path):
+    kakao_dir = tmp_path / "kakao"
+    macp_dir = tmp_path / "macp"
+    monkeypatch.setenv("KAKAO_VAULT_DIR", str(kakao_dir))
+    monkeypatch.setenv("MACP_VAULT_ROOT", str(macp_dir))
+    # AC c: KAKAO_VAULT_DIR stays TOP priority — it wins outright and the shared
+    # resolver (which would otherwise return macp_dir) is never consulted.
+    assert kakao_format._vault_root() == kakao_dir
+
+
+def test_kakao_vault_dir_honoured_even_when_macp_vault_root_unset(monkeypatch, tmp_path):
+    monkeypatch.delenv("MACP_VAULT_ROOT", raising=False)
+    kakao_dir = tmp_path / "kakao-only"
+    monkeypatch.setenv("KAKAO_VAULT_DIR", str(kakao_dir))
+    # The top-priority early return does not depend on MACP_VAULT_ROOT being set.
+    assert kakao_format._vault_root() == kakao_dir

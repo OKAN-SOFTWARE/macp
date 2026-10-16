@@ -1,0 +1,43 @@
+{
+ "provenance": {
+  "kind": "synthesized",
+  "from": "success.json (legs.text_sid transcript lines)",
+  "why": "cannot be triggered on demand; pins that an rc!=0 stage whose transcript has API messages but no cost-state still records its tokens",
+  "note": "stdout/stderr are illustrative, not captured CLI text",
+  "regenerate": "python3 todo_system/orchestrator/tests/fixtures/claude_output/synthesize.py"
+ },
+ "legs": {
+  "text": {
+   "argv_tail": [
+    "--model",
+    "claude-haiku-4-5-20251001",
+    "--max-turns",
+    "1"
+   ],
+   "rc": 1,
+   "stdout": "Execution error",
+   "stderr": ""
+  },
+  "text_sid": {
+   "argv_tail": [
+    "--model",
+    "claude-haiku-4-5-20251001",
+    "--max-turns",
+    "1",
+    "--session-id",
+    "5ea3b15b-2867-535c-bf17-b7777e9deaff"
+   ],
+   "rc": 1,
+   "stdout": "Execution error",
+   "stderr": "",
+   "session_id": "5ea3b15b-2867-535c-bf17-b7777e9deaff",
+   "transcript": [
+    "{\"type\":\"queue-operation\",\"operation\":\"enqueue\",\"timestamp\":\"2026-09-19T10:06:38.777Z\",\"sessionId\":\"5ea3b15b-2867-535c-bf17-b7777e9deaff\",\"content\":\"Reply with exactly MACP_FIXTURE_OK and nothing else.\"}",
+    "{\"type\":\"queue-operation\",\"operation\":\"dequeue\",\"timestamp\":\"2026-09-19T10:06:38.780Z\",\"sessionId\":\"5ea3b15b-2867-535c-bf17-b7777e9deaff\"}",
+    "{\"parentUuid\":null,\"isSidechain\":false,\"promptId\":\"aa31f951-6ab3-42ec-8948-ccf8bc60a91e\",\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":\"Reply with exactly MACP_FIXTURE_OK and nothing else.\"},\"uuid\":\"3ce3af08-3f2c-4626-94d0-a7e3230fc82d\",\"timestamp\":\"2026-09-19T10:06:40.203Z\",\"permissionMode\":\"default\",\"promptSource\":\"sdk\",\"turnOrigin\":\"sdk\",\"userType\":\"external\",\"entrypoint\":\"sdk-cli\",\"cwd\":\"/home/user/Projects/MaestroACP\",\"sessionId\":\"5ea3b15b-2867-535c-bf17-b7777e9deaff\",\"version\":\"2.1.277\",\"gitBranch\":\"worker/macp-pipeline-token-instrumentation\"}",
+    "{\"parentUuid\":\"468ba416-d8df-4705-a864-e81b8774c086\",\"isSidechain\":false,\"message\":{\"model\":\"claude-haiku-4-5-20251001\",\"id\":\"msg_011CfCcSNZDvaw9FyLrYZfxi\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"thinking\",\"thinking\":\"\",\"signature\":\"EqYDCrIBCBEYAipAwEJ6c5L6eebMuspIwt7RIKrSd2hB80cSa8weEJRovWZRqw9QnZXt8h4kbkc/d8mCrXUJHnqPDgtsS9YYkLYOTzIZY2xhdWRlLWhhaWt1LTQtNS0yMDI1MTAwMTgAQgh0aGlua2luZ1okNGJiY2IxZDctMzRjMS00NTRhLWIwYmUtNGY4MmY4MzYwMDg1chBD+XkbUpN6egiKyTtVY7VyiAEBqAGxvbnVBrABAhIMy83Tm9J4YPs/NkNqGgwhIwuprzefVImrz84iMMifMf6GSD3JphQLbj7RjhBN8tAUecu12zgok+r8m238cBxSgVFi0MjoGgibYtuiECqgAZET4nxrIobfYM4IgIUzAVCIiQj9B0EGcOtwlCmpf649aXb5Gs8fmCYshITfFDV8vGyZCukVG3aQOzYHcX5BevuYpBMhnTExgIIwHv1Xi+nmHRz3ywsJDmUonuFADXZmQVlQYVuuy5/NYaBBPMLxvPPe2P3jrLueeDiZL1WavrvErxijkLFwfIro/ao3P3nUTDiRzdkvv2HoAtJqhqs1zWQYAQ==\"}],\"container\":null,\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":37104,\"output_tokens\":57,\"output_tokens_details\":{\"thinking_tokens\":43},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"not_available\",\"iterations\":[{\"input_tokens\":10,\"output_tokens\":57,\"cache_read_input_tokens\":37104,\"cache_creation_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":0},\"type\":\"message\"}],\"speed\":\"standard\"},\"input_transformations\":[],\"diagnostics\":null,\"context_management\":null},\"apiBlockIndex\":0,\"requestId\":\"req_011CfCcSN9uwPLs7gFwNfAYQ\",\"type\":\"assistant\",\"uuid\":\"445e7029-1c38-4906-bf78-19bdfb32b39d\",\"timestamp\":\"2026-09-19T10:06:41.236Z\",\"perTurnEffort\":null,\"userType\":\"external\",\"entrypoint\":\"sdk-cli\",\"cwd\":\"/home/user/Projects/MaestroACP\",\"sessionId\":\"5ea3b15b-2867-535c-bf17-b7777e9deaff\",\"version\":\"2.1.277\",\"gitBranch\":\"worker/macp-pipeline-token-instrumentation\"}",
+    "{\"parentUuid\":\"445e7029-1c38-4906-bf78-19bdfb32b39d\",\"isSidechain\":false,\"message\":{\"model\":\"claude-haiku-4-5-20251001\",\"id\":\"msg_011CfCcSNZDvaw9FyLrYZfxi\",\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"MACP_FIXTURE_OK\"}],\"container\":null,\"stop_reason\":\"end_turn\",\"stop_sequence\":null,\"stop_details\":null,\"usage\":{\"input_tokens\":10,\"cache_creation_input_tokens\":0,\"cache_read_input_tokens\":37104,\"output_tokens\":57,\"output_tokens_details\":{\"thinking_tokens\":43},\"server_tool_use\":{\"web_search_requests\":0,\"web_fetch_requests\":0},\"service_tier\":\"standard\",\"cache_creation\":{\"ephemeral_1h_input_tokens\":0,\"ephemeral_5m_input_tokens\":0},\"inference_geo\":\"not_available\",\"iterations\":[{\"input_tokens\":10,\"output_tokens\":57,\"cache_read_input_tokens\":37104,\"cache_creation_input_tokens\":0,\"cache_creation\":{\"ephemeral_5m_input_tokens\":0,\"ephemeral_1h_input_tokens\":0},\"type\":\"message\"}],\"speed\":\"standard\"},\"input_transformations\":[],\"diagnostics\":null,\"context_management\":null},\"apiBlockIndex\":1,\"requestId\":\"req_011CfCcSN9uwPLs7gFwNfAYQ\",\"type\":\"assistant\",\"uuid\":\"a1e0a537-5983-4c45-aa44-782254264f0d\",\"timestamp\":\"2026-09-19T10:06:41.297Z\",\"perTurnEffort\":null,\"userType\":\"external\",\"entrypoint\":\"sdk-cli\",\"cwd\":\"/home/user/Projects/MaestroACP\",\"sessionId\":\"5ea3b15b-2867-535c-bf17-b7777e9deaff\",\"version\":\"2.1.277\",\"gitBranch\":\"worker/macp-pipeline-token-instrumentation\"}"
+   ]
+  }
+ }
+}

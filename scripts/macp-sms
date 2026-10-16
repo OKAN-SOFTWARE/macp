@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# macp-sms — read the host's phone-SMS inbox (`python -m todo_system.sms`, see
+# CLAUDE.md §11) from ANY directory. Worker stages run in other repos'
+# checkouts and their tool whitelist splits on spaces, so a rule like
+# `Bash(python3 -m todo_system.sms:*)` can never match; this wrapper gives the
+# whitelist a single space-free name: `Bash(macp-sms:*)`
+# (todo_system/orchestrator/stages.py SMS_TOOL_RULE).
+# Install: copy to a dir on PATH, e.g.
+# `cp scripts/macp-sms ~/.local/bin/macp-sms && chmod +x ~/.local/bin/macp-sms`.
+# todo_system.sms is stdlib-only, so the python3 fallback is always enough.
+MACP_REPO="${MACP_REPO:-$HOME/Projects/MaestroACP}"
+PY="$MACP_REPO/.venv/bin/python"
+[ -x "$PY" ] || PY="$(command -v python3 || command -v python)"
+exec env PYTHONPATH="$MACP_REPO${PYTHONPATH:+:$PYTHONPATH}" "$PY" -m todo_system.sms "$@"
