@@ -396,6 +396,123 @@ class ProjectsSectionTests(unittest.TestCase):
         self.assertIn('id="c-projects"', M.HTML)
         self.assertIn("fill('projects'", M.HTML)
 
+    def test_waiting_blocked_projects_are_on_hold(self):
+        # on_hold (additive, server-decided): waiting/blocked umbrellas carry it so the
+        # client folds them under a collapsed 보류 toggle; open ones stay on screen.
+        con = sqlite3.connect(M.TODO_DB)
+        con.executemany(
+            "INSERT INTO tasks VALUES (?,?,?,'-',NULL,'',?,?,?,?)", [
+                # slug, title, status, tags, parent, is_parent, worker_mode
+                ("fxb", "blocked umbrella", "blocked", "todo", None, 1, None),
+                ("fxb-a", "ba", "open", "todo", "fxb", 0, None),
+            ])
+        con.commit()
+        con.close()
+        by = {p["slug"]: p for p in M.collect_status()["projects"]}
+        self.assertTrue(by["fxq"]["on_hold"])     # waiting
+        self.assertTrue(by["fxb"]["on_hold"])     # blocked
+        self.assertFalse(by["fxp"]["on_hold"])    # open
+
+
+class ActiveAgentDefaultTests(unittest.TestCase):
+    """active[].agent_is_default (additive, server-decided): the client hides the
+    'agent …' line when the runner is the default one. True when the agent is empty
+    or equals DEFAULT_RUNNER_AGENT; False for a named non-default agent."""
+
+    def setUp(self):
+        self.tmp = _install_status_fixture(self)
+
+    def _active(self, slug, agent):
+        d = {"task_id": slug, "state": "in_progress", "updated_ts": "2026-01-01T00:00:05"}
+        if agent is not None:
+            d["agent_id"] = agent                    # absent key → collect_assignments ''
+        (self.tmp / "assign" / ("%s.json" % slug)).write_text(
+            json.dumps(d), encoding="utf-8")
+
+    def test_default_or_missing_agent_is_default_true(self):
+        self._active("fx-def", M.DEFAULT_RUNNER_AGENT)
+        self._active("fx-empty", "")
+        self._active("fx-none", None)                 # no agent_id key at all
+        active = {r["task"]: r for r in M.collect_status()["active"]}
+        for slug in ("fx-def", "fx-empty", "fx-none"):
+            self.assertTrue(active[slug]["agent_is_default"], slug)
+
+    def test_named_non_default_agent_is_not_default(self):
+        # the base fixture's fx-active-1-run runs under agent 'w1'
+        active = {r["task"]: r for r in M.collect_status()["active"]}
+        self.assertFalse(active["fx-active-1-run"]["agent_is_default"])
+
+
+class InfoDietShell(unittest.TestCase):
+    """Info-diet contract (2026-10-17) pinned on the static HTML string, mirroring
+    DashboardShellTests/GroupFoldShell. Live heights/button-count/390px-no-scroll are
+    gated by the run's playwright after-metrics.json, not here."""
+
+    HTML = M.HTML
+
+    def test_copy_button_left_the_list_rows(self):
+        # tlabel (list rows) no longer appends the ⧉ id button; tlabelCp (detail only) does.
+        self.assertNotIn("</span> ${copyBtn(slug)}", self.HTML)
+        self.assertIn("function tlabelCp(", self.HTML)
+        self.assertIn("tlabelCp(d.slug,d.title,d.project)", self.HTML)  # run/task detail
+
+    def test_active_agent_line_is_gated(self):
+        # the 'agent …' line renders only for a named non-default agent.
+        self.assertIn("r.agent&&!r.agent_is_default", self.HTML)
+
+    def test_project_row_has_no_action_prose(self):
+        # projRow main is just the title (no next_action .note second line).
+        self.assertIn(
+            'prj" data-open="task:${esca(r.slug)}">'
+            '<div class="main"><div>${tlabel(r.slug,r.title,r.project)}</div></div>',
+            self.HTML)
+
+    def test_system_detail_card_and_unified_history(self):
+        self.assertIn('id="d-sys"', self.HTML)                     # collapsed 시스템 상세
+        self.assertIn("function renderHistory(", self.HTML)        # runs ∪ recent
+        # unified row keeps both click targets (run→runRow, task→recentRow).
+        self.assertIn("h.k==='run'?runRow(h.row):recentRow(h.row)", self.HTML)
+        # runs id anchors preserved (absorbed into 이력, kept as hidden placeholder).
+        for anchor in ('id="d-runs"', 'id="cnt-runs"', 'id="recent"', 'id="d-recent"',
+                       'id="d-agents"', 'id="d-mode"', 'id="d-deps"'):
+            self.assertIn(anchor, self.HTML, anchor)
+
+    def test_projects_split_open_and_hold(self):
+        self.assertIn("fill('projects'", self.HTML)                # open projects
+        self.assertIn("fill('projects-hold'", self.HTML)           # 보류
+        self.assertIn('id="d-projhold"', self.HTML)
+
+    def test_first_screen_lists_are_capped_and_one_line(self):
+        # open projects + 진행 중 are bounded (top N + 더보기) so the first screen height
+        # stays under the metric thresholds regardless of data volume.
+        self.assertIn("PROJLIM", self.HTML)
+        self.assertIn("ACTLIM", self.HTML)
+        self.assertIn('data-sec="projects"', self.HTML)
+        self.assertIn('data-sec="active"', self.HTML)
+        self.assertIn("foldFill('active','active'", self.HTML)     # fold kept on the slice
+        # project rows are one physical line (no 2-line wrap on 390px).
+        self.assertIn(".prj .main>div{white-space:nowrap", self.HTML)
+
+    def test_status_card_three_counts_and_moved_metrics(self):
+        for label in ("<span>주의</span>", "<span>결정</span>", "<span>진행 중</span>"):
+            self.assertIn(label, self.HTML, label)
+        # the 3 action counts stay on the first screen (before 시스템 상세); runs today /
+        # usage / slots moved into it (after d-sys).
+        d_sys = self.HTML.index('id="d-sys"')
+        self.assertLess(self.HTML.index('id="mv-attn"'), d_sys)
+        self.assertLess(d_sys, self.HTML.index('id="mv-runs"'))
+        self.assertLess(d_sys, self.HTML.index('id="usage"'))
+        self.assertIn('id="sys-slots"', self.HTML)
+
+    def test_empty_sections_fold_away(self):
+        self.assertIn("$('c-attention').hidden=", self.HTML)
+        for sub in ("d-humanlife", "d-humandev", "d-humanblocked", "d-humanlater"):
+            self.assertIn("$('%s').hidden=" % sub, self.HTML, sub)
+
+    def test_no_external_urls_in_diet(self):
+        self.assertNotIn("https://", self.HTML)
+        self.assertNotIn("http://", self.HTML)
+
 
 if __name__ == "__main__":
     unittest.main()

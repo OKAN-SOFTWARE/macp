@@ -81,6 +81,10 @@ ITEMS = VAULT / "Todo" / "items"
 REGISTRY = VAULT / "Worker" / "agents" / "registry.yaml"
 
 ACTIVE = ("dispatched", "in_progress")
+# The default runner identity (systemd unit runs `--agent worker-default`). The
+# server decides `active[].agent_is_default` from it so the web/app can drop the
+# noisy "agent …" row line unless a non-default agent is running the task.
+DEFAULT_RUNNER_AGENT = "worker-default"
 STAGE_RE = re.compile(r"=== (\w+) \(rc=(\d+)\) ===")
 
 
@@ -662,6 +666,9 @@ def collect_projects(assignments: list[dict]) -> list[dict]:
                      "title": _PARENT_TITLE_RE.sub("", t["title"] or "") or slug,
                      "project": _root_label(slug),
                      "status": t["status"], "worker_mode": t["wm"],
+                     # additive: server decides open vs. held so the client can fold
+                     # waiting/blocked umbrellas under a collapsed "보류" toggle.
+                     "on_hold": t["status"] in ("waiting", "blocked"),
                      "action": t["next_action"][:110],
                      "due": t["due"] if _parse_date(t["due"]) else "",
                      "leaves_done": done, "leaves_total": total,
@@ -1173,6 +1180,11 @@ def collect_status() -> dict:
     # active/attention, so those objects may end up carrying `group` too; harmless,
     # it is a field addition and no consumer removes or renames anything.
     active = [r for r in a if r["state"] in ACTIVE]
+    for r in active:                               # additive: the server decides whether
+        # the runner is the default one, so the client can hide the "agent …" line
+        # unless a non-default agent is running the task. (recent shares these dict
+        # objects per the note above; the extra bool riding along is harmless.)
+        r["agent_is_default"] = (not r.get("agent")) or r["agent"] == DEFAULT_RUNNER_AGENT
     # "deferred" rows (display state) are deliberately absent: they are waiting,
     # not failing, and retry by themselves — nothing for a human to do.
     # An umbrella whose children are still open is in progress, not waiting on a
@@ -1296,7 +1308,7 @@ overflow:hidden;text-overflow:ellipsis}
 .pill{padding:3px 11px;border-radius:20px;font-size:13px;font-weight:600;
 border:1px solid var(--bd);white-space:nowrap}
 .live{animation:pulse 1.5s infinite}@keyframes pulse{50%{opacity:.3}}
-.wrap{max-width:900px;margin:0 auto;padding:14px 16px 56px;
+.wrap{max-width:900px;margin:0 auto;padding:14px 16px 28px;
 display:flex;flex-direction:column;gap:12px}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:13px 15px}
 .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--mut);
@@ -1347,7 +1359,8 @@ details[open]>summary::before{content:'▾'}
 details>summary .cnt{margin-left:auto}
 .pbar{display:inline-block;width:56px;height:6px;border-radius:3px;background:#21262d;
 overflow:hidden;vertical-align:middle}.pbar i{display:block;height:100%;background:var(--grn)}
-.prj .note{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* project rows are one line: chip + title clipped with ellipsis (info diet). */
+.prj .main>div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* Folded task groups: same-section rows sharing a project collapse under one tappable
    header row (▸ collapsed / ▾ open); kids are indented and keep their own row behaviour. */
 .grphead{font-weight:600}
@@ -1383,21 +1396,24 @@ border-radius:8px;padding:10px;font-size:13px;margin-top:6px}
   <!-- 현재 상태 (idle/실행중/PAUSED/usage HOLD) — always visible triage -->
   <section class="card" id="c-status">
     <div class="state"><span id="state-line">…</span><span class="sub" id="state-sub"></span><span class="sub" id="state-acct"></span></div>
+    <!-- first screen = status line + 3 action counts (주의·결정·진행 중). runs today·
+         queue·todo open·usage·슬롯 moved into 시스템 상세 (#sys-metrics / #usage). -->
     <div class="metrics">
-      <div class="m"><b id="mv-runs">–</b><span>runs today</span></div>
-      <div class="m"><b id="mv-active">–</b><span>active</span></div>
-      <div class="m"><b id="mv-queue">–</b><span>queue</span></div>
-      <div class="m"><b id="mv-attn">–</b><span>attention</span></div>
-      <div class="m"><b id="mv-human">–</b><span>급한 사람 할일</span></div>
-      <div class="m"><b id="mv-open">–</b><span>todo open</span></div>
+      <div class="m"><b id="mv-attn">–</b><span>주의</span></div>
+      <div class="m"><b id="mv-human">–</b><span>결정</span></div>
+      <div class="m"><b id="mv-active">–</b><span>진행 중</span></div>
     </div>
-    <div class="usage" id="usage" hidden></div>
   </section>
 
   <!-- 진행 중인 프로젝트 (최상위 부모 태스크) -->
   <section class="card" id="c-projects">
     <h2>프로젝트 <span class="cnt" id="cnt-proj">0</span></h2>
     <div class="list" id="projects"></div>
+    <button class="more" data-sec="projects" hidden>더보기</button>
+    <details id="d-projhold" hidden style="margin-top:8px">
+      <summary>보류 <span class="cnt" id="cnt-projhold">0</span></summary>
+      <div class="list" id="projects-hold"></div>
+    </details>
   </section>
 
   <!-- 내가 결정할 것 (사람 몫) -->
@@ -1432,43 +1448,45 @@ border-radius:8px;padding:10px;font-size:13px;margin-top:6px}
   <section class="card" id="c-active">
     <h2>진행 중 <span class="cnt" id="cnt-active">0</span></h2>
     <div class="list" id="active"></div>
+    <button class="more" data-sec="active" hidden>더보기</button>
   </section>
 
-  <!-- 이하 이력·참고: 기본 접힘 -->
-  <section class="card">
-    <details id="d-runs">
-      <summary>최근 실행 (runs) <span class="cnt" id="cnt-runs">0</span></summary>
-      <div class="list" id="runs"></div>
-      <button class="more" data-sec="runs" hidden>더보기</button>
-    </details>
-  </section>
-
+  <!-- 이하 이력·참고·계측: 기본 접힘 '시스템 상세' 한 카드로 합침. 안의 기존
+       <details>/<div id> 는 중첩으로 보존(id·cnt-* 앵커 불변). runs 는 '이력'에
+       흡수되므로 cnt-runs/#runs 는 숨긴 자리표시로만 남긴다. -->
   <section class="card" id="c-recent">
-    <details id="d-recent">
-      <summary>최근 태스크 이력 (recent) <span class="cnt" id="cnt-recent">0</span></summary>
-      <div class="list" id="recent"></div>
-      <button class="more" data-sec="recent" hidden>더보기</button>
-    </details>
-  </section>
-
-  <section class="card">
-    <details id="d-agents">
-      <summary>에이전트 (러너) <span class="cnt" id="cnt-agents">0</span></summary>
-      <div class="list" id="agents"></div>
-    </details>
-  </section>
-
-  <section class="card">
-    <details id="d-mode">
-      <summary>오픈 태스크 (worker_mode별) <span class="cnt" id="cnt-mode">0</span></summary>
-      <div class="chips" id="mode"></div>
-    </details>
-  </section>
-
-  <section class="card">
-    <details id="d-deps">
-      <summary>🔗 크로스-프로젝트 의존성 <span class="cnt" id="cnt-deps">0</span></summary>
-      <div class="list" id="deps"></div>
+    <details id="d-sys">
+      <summary>시스템 상세 <span class="cnt" id="cnt-sys">0</span></summary>
+      <!-- runs today/queue/todo open·슬롯·usage: moved off the first screen (same ids,
+           update()/setUsage/setState keep working since the elements only moved). -->
+      <div id="sys-metrics">
+        <div class="metrics">
+          <div class="m"><b id="mv-runs">–</b><span>runs today</span></div>
+          <div class="m"><b id="mv-queue">–</b><span>queue</span></div>
+          <div class="m"><b id="mv-open">–</b><span>todo open</span></div>
+        </div>
+        <div class="note" id="sys-slots"></div>
+      </div>
+      <div class="usage" id="usage" hidden></div>
+      <details id="d-recent" open style="margin-top:8px">
+        <summary>이력 (실행·태스크) <span class="cnt" id="cnt-recent">0</span></summary>
+        <div class="list" id="recent"></div>
+        <button class="more" data-sec="recent" hidden>더보기</button>
+      </details>
+      <details id="d-agents" style="margin-top:8px">
+        <summary>에이전트 (러너) <span class="cnt" id="cnt-agents">0</span></summary>
+        <div class="list" id="agents"></div>
+      </details>
+      <details id="d-mode" style="margin-top:8px">
+        <summary>오픈 태스크 (worker_mode별) <span class="cnt" id="cnt-mode">0</span></summary>
+        <div class="chips" id="mode"></div>
+      </details>
+      <details id="d-deps" style="margin-top:8px">
+        <summary>🔗 크로스-프로젝트 의존성 <span class="cnt" id="cnt-deps">0</span></summary>
+        <div class="list" id="deps"></div>
+      </details>
+      <!-- id 보존용 자리표시(runs 는 이력에 흡수됨) -->
+      <div id="d-runs" hidden><span class="cnt" id="cnt-runs">0</span><div class="list" id="runs"></div></div>
     </details>
   </section>
 </main>
@@ -1492,13 +1510,15 @@ const badge=s=>{const m={done:'b-done',failed:'b-fail',deferred:'b-def',in_progr
 function pcolor(s){let h=0;for(const c of(s||''))h=(h*31+c.charCodeAt(0))>>>0;return h%360}
 function copyBtn(id){return `<button class="cp" data-cp="${esca(id)}" title="task id 복사: ${esca(id)}">⧉ id</button>`}
 function pchip(p){if(!p)return '';const h=pcolor(p);return `<span class="pchip" style="color:hsl(${h},65%,74%);border-color:hsl(${h},35%,44%)" title="프로젝트: ${esca(p)}">${esc(p)}</span>`}
-function tlabel(slug,title,project){return `${pchip(project)}<span class="ttl">${esc(title||slug)}</span> ${copyBtn(slug)}`}
+function tlabel(slug,title,project){return `${pchip(project)}<span class="ttl">${esc(title||slug)}</span>`}
+// List rows carry no ⧉ id button (info diet); only the task/run detail views do.
+function tlabelCp(slug,title,project){return tlabel(slug,title,project)+' '+copyBtn(slug)}
 function stages(st){return (st||[]).map(s=>`<span class="stg ${s.rc===0?'s-ok':'s-bad'}" title="${esc(s.name)} rc=${s.rc}">${esc((s.name[0]||'?').toUpperCase())}</span>`).join('')}
 const empty=t=>`<div class="empty">${t}</div>`;
 const dur=s=>{if(s==null)return '—';if(s<=0)return '지금';const h=Math.floor(s/3600),m=Math.floor((s%3600)/60);return h?`${h}시간 ${m}분`:`${m}분`};
 const at=e=>e==null?'':new Date(e*1000).toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
 
-const LIM=10, showAll={runs:false,recent:false};
+const LIM=10, PROJLIM=5, ACTLIM=6, showAll={runs:false,recent:false,projects:false,active:false};
 let last=null, mounted=false;
 
 const WHY={parked:['검토대기','b-wait'],owned:['결정필요','b-pur'],blocked:['블록','b-fail'],manual:['수동','b-gray'],backlog:['미설정','b-blu']};
@@ -1507,10 +1527,10 @@ const whyBadge=w=>{const m=WHY[w]||['?','b-gray'];return `<span class="badge ${m
 const md=s=>s?String(s).slice(5).replace('-','/').replace('T',' '):'';
 const humanRow=r=>`<div class="row clk" data-open="task:${esca(r.slug)}"><div class="main"><div>${tlabel(r.slug,r.title,r.project)}</div><div class="note">${esc(r.action)||'—'}</div></div><div class="rmeta">${r.later&&r.not_before?`<span class="age">${esc(md(r.not_before))}부터</span> `:''}${r.due?`<span class="age">~${esc(md(r.due))}</span> `:''}${whyBadge(r.why)}</div></div>`;
 const attnRow=r=>`<div class="row clk" data-open="task:${esca(r.task)}"><div class="main"><div>${tlabel(r.task,r.title,r.project)}</div><div class="note">${esc(r.note)||'—'}</div></div><div class="rmeta">${badge(r.state)}${r.capacity_limited?' <span class="badge b-gray">capacity</span>':''}${r.refail?` <span class="age">↻${r.refail}</span>`:''} <span class="age mono">${esc(r.age)}</span></div></div>`;
-const activeRow=r=>`<div class="row clk" data-open="task:${esca(r.task)}"><div class="main"><div>${tlabel(r.task,r.title,r.project)}</div><div class="note">agent ${esc(r.agent)||'—'}</div></div><div class="rmeta">${badge(r.state)} <span class="age mono">${esc(r.age)}</span></div></div>`;
+const activeRow=r=>`<div class="row clk" data-open="task:${esca(r.task)}"><div class="main"><div>${tlabel(r.task,r.title,r.project)}</div>${(r.agent&&!r.agent_is_default)?`<div class="note">agent ${esc(r.agent)}</div>`:''}</div><div class="rmeta">${badge(r.state)} <span class="age mono">${esc(r.age)}</span></div></div>`;
 const PST={waiting:['대기','b-wait'],blocked:['블록','b-fail']};
 const projRow=r=>{const t=r.leaves_total||0,dn=r.leaves_done||0,pc=t?Math.round(dn*100/t):0,st=PST[r.status];
-  return `<div class="row clk prj" data-open="task:${esca(r.slug)}"><div class="main"><div>${tlabel(r.slug,r.title,r.project)}</div><div class="note">${esc(r.action)||'—'}</div></div><div class="rmeta">${r.active?`<span class="badge b-run">● ${r.active}</span> `:''}${r.attention?`<span class="badge b-fail">⚠ ${r.attention}</span> `:''}${st?`<span class="badge ${st[1]}">${st[0]}</span> `:''}${r.last_age?`<span class="age" title="최근 실행 ${esca(r.last_activity)}">${esc(r.last_age)} 전</span> `:''}<span class="pbar" title="${dn}/${t} 완료"><i style="width:${pc}%"></i></span> <span class="age mono">${dn}/${t}</span></div></div>`};
+  return `<div class="row clk prj" data-open="task:${esca(r.slug)}"><div class="main"><div>${tlabel(r.slug,r.title,r.project)}</div></div><div class="rmeta">${r.active?`<span class="badge b-run">● ${r.active}</span> `:''}${r.attention?`<span class="badge b-fail">⚠ ${r.attention}</span> `:''}${st?`<span class="badge ${st[1]}">${st[0]}</span> `:''}${r.last_age?`<span class="age" title="최근 실행 ${esca(r.last_activity)}">${esc(r.last_age)} 전</span> `:''}<span class="pbar" title="${dn}/${t} 완료"><i style="width:${pc}%"></i></span> <span class="age mono">${dn}/${t}</span></div></div>`};
 const runRow=r=>{const w=r.when||'';return `<div class="row clk" data-open="run:${esca(r.run)}"><div class="main"><div>${tlabel(r.slug,r.title,r.project)} <span class="age mono">${esc(w.slice(0,2))}:${esc(w.slice(2,4))}</span></div><div class="note">${stages(r.stages)||'—'}${(r.artifacts||[]).length?' · '+esc((r.artifacts||[]).join(', ')):''}</div></div></div>`};
 const recentRow=r=>`<div class="row clk" data-open="task:${esca(r.task)}"><div class="main"><div>${tlabel(r.task,r.title,r.project)}</div><div class="note">${esc(r.note)||'—'}</div></div><div class="rmeta">${badge(r.state)}${r.todo_status&&r.todo_status!=='open'?` <span class="age">(${esc(r.todo_status)})</span>`:''} <span class="age mono">${esc(r.age)}</span></div></div>`;
 const agentRow=a=>`<div class="row"><div class="main"><div><span class="dot" style="display:inline-block;width:9px;height:9px;margin-right:6px;background:${a.alive?'var(--grn)':'var(--mut)'}"></span>${esc(a.id)} <span class="note" style="display:inline">${esc(a.kind)}</span></div><div class="note">${esc(a.host)||'—'}</div></div><span class="age mono">${a.age?esc(a.age)+' 전':'—'}</span></div>`;
@@ -1547,6 +1567,25 @@ function fillMore(sec,list,render){
   const btn=document.querySelector(`.more[data-sec="${sec}"]`);
   if(btn){if(list.length>LIM){btn.hidden=false;btn.textContent=showAll[sec]?'접기':`더보기 (+${list.length-LIM})`}else btn.hidden=true}
 }
+// Unified history: runs ∪ recent, deduped by slug (a run wins over a ledger-only
+// recent — it carries more of "what happened"), newest first. Time key uses only
+// existing fields: run `YYYYMMDDTHHMMSS-…`[:15] and recent `updated` ISO, both
+// stripped to digits (YYYYMMDDHHMMSS) and compared as strings. Each row keeps its
+// own click target (run→run:, task→task:) via its original renderer.
+const histRow=h=>h.k==='run'?runRow(h.row):recentRow(h.row);
+function renderHistory(d){
+  const seen={},hist=[];
+  for(const r of (d.runs||[])){const s=r.slug||'';if(s)seen[s]=1;
+    hist.push({k:'run',slug:s,t:(r.run||'').slice(0,15).replace(/\\D/g,''),row:r})}
+  for(const r of (d.recent||[])){const s=r.task||'';if(s&&seen[s])continue;
+    hist.push({k:'task',slug:s,t:(r.updated||'').replace(/\\D/g,''),row:r})}
+  hist.sort((a,b)=>b.t.localeCompare(a.t));
+  $('cnt-recent').textContent=hist.length;
+  const shown=showAll.recent?hist:hist.slice(0,LIM);
+  $('recent').innerHTML=hist.length?shown.map(histRow).join(''):empty('없음');
+  const btn=document.querySelector('.more[data-sec="recent"]');
+  if(btn){if(hist.length>LIM){btn.hidden=false;btn.textContent=showAll.recent?'접기':`더보기 (+${hist.length-LIM})`}else btn.hidden=true}
+}
 
 // worker_state (from /api/status) → badge label / short tag / color / live dot.
 // `label` reads in the big state line, `hs` is the compact header chip.
@@ -1564,16 +1603,18 @@ function setState(d){
   // Current Claude account (/api/status.account, leaf ③): the server decides, this only renders.
   // Missing key (older server) → blank; null active → '계정: -'. Leaf ④: ' · PAUSED' when
   // every account is unavailable (a.paused); accounts[]/last_switch are not rendered here.
-  // Multi-account capacity: ' · 슬롯 used/max (name used/max, …)' from a.slots, which the
+  // Multi-account capacity: '슬롯 used/max (name used/max, …)' from a.slots, which the
   // server (collect_account_slots) computes from the runner's snapshot — rendered only when a
   // runner has reported (total_max != null), else omitted. Server computes, client renders.
+  // Off the first-screen account line (info diet) → #sys-slots inside 시스템 상세.
   const ae=$('state-acct');
-  if(ae){const a=d.account;let t=a?('계정: '+(a.active?`${a.active} (${a.source})`:'-')+(a.paused?' · PAUSED':'')):'';
-    const s=a&&a.slots;
+  if(ae){const a=d.account;ae.textContent=a?('계정: '+(a.active?`${a.active} (${a.source})`:'-')+(a.paused?' · PAUSED':'')):'';}
+  const se=$('sys-slots');
+  if(se){const a=d.account,s=a&&a.slots;
     if(s&&s.total_max!=null){
       const pa=(s.per_account||[]).map(r=>`${r.name} ${r.used}/${r.max==null?'-':r.max}`).join(', ');
-      t+=` · 슬롯 ${s.total_used}/${s.total_max}`+(pa?` (${pa})`:'');}
-    ae.textContent=t;}
+      se.textContent=`슬롯 ${s.total_used}/${s.total_max}`+(pa?` (${pa})`:'');}
+    else se.textContent='';}
   const m=d.worker_state&&WSTATE[d.worker_state];
   if(m){
     sl.textContent=m.label;sl.style.color=m.color;
@@ -1643,19 +1684,41 @@ function update(d){
   foldFill('human-life','human-life',life,humanRow,'없음');
   foldFill('human-dev','human-dev',dev,humanRow,'없음');
   foldFill('human-later','human-later',later,humanRow,'없음');
+  // empty sub-blocks fold away (human-urgent keeps its ✓ empty line; c-human stays).
+  $('d-humanlife').hidden=!life.length;
+  $('d-humandev').hidden=!dev.length;
+  $('d-humanblocked').hidden=!blocked.length;
+  $('d-humanlater').hidden=!later.length;
 
-  const projs=d.projects||[];
-  $('cnt-proj').textContent=projs.length;
-  fill('projects',projs,projRow,'진행 중인 프로젝트 없음');
+  // open projects on the first screen (top PROJLIM + 더보기); waiting/blocked fold
+  // under a collapsed 보류. cnt-proj stays the full open count.
+  const projs=d.projects||[],openP=projs.filter(p=>!p.on_hold),holdP=projs.filter(p=>p.on_hold);
+  $('cnt-proj').textContent=openP.length;
+  const shownP=showAll.projects?openP:openP.slice(0,PROJLIM);
+  fill('projects',shownP,projRow,'진행 중인 프로젝트 없음');
+  const pbtn=document.querySelector('.more[data-sec="projects"]');
+  if(pbtn){if(openP.length>PROJLIM){pbtn.hidden=false;pbtn.textContent=showAll.projects?'접기':`더보기 (+${openP.length-PROJLIM})`}else pbtn.hidden=true}
+  $('cnt-projhold').textContent=holdP.length;
+  $('d-projhold').hidden=!holdP.length;
+  fill('projects-hold',holdP,projRow,'없음');
 
   $('cnt-attn').textContent=d.attention.length;
+  $('c-attention').hidden=!d.attention.length;   // 깨진 것 0건이면 카드 자체 숨김
   foldFill('attention','attention',d.attention,attnRow,'주의가 필요한 항목 없음 ✓');
 
+  // 진행 중: top ACTLIM on the first screen (folded by project), rest behind 더보기.
+  // cnt-active stays the full count; foldFill keeps its grouping on the shown slice.
   $('cnt-active').textContent=d.active.length;
-  foldFill('active','active',d.active,activeRow,'지금 실행 중인 task 없음');
+  const shownA=showAll.active?d.active:d.active.slice(0,ACTLIM);
+  foldFill('active','active',shownA,activeRow,'지금 실행 중인 task 없음');
+  const abtn=document.querySelector('.more[data-sec="active"]');
+  if(abtn){if(d.active.length>ACTLIM){abtn.hidden=false;abtn.textContent=showAll.active?'접기':`더보기 (+${d.active.length-ACTLIM})`}else abtn.hidden=true}
 
-  $('cnt-runs').textContent=d.runs.length;fillMore('runs',d.runs,runRow);
-  $('cnt-recent').textContent=d.recent.length;fillMore('recent',d.recent,recentRow);
+  renderHistory(d);
+  $('cnt-runs').textContent=d.runs.length;
+  // small, non-showy: how many of the detail subsections have any content (0–4).
+  $('cnt-sys').textContent=[d.runs.length||d.recent.length,d.agents.length,
+    (d.deps||[]).length,Object.keys((d.todo&&d.todo.by_mode)||{}).length].filter(n=>n>0).length;
 
   $('cnt-agents').textContent=d.agents.length;
   fill('agents',d.agents,agentRow,'없음');
@@ -1687,7 +1750,7 @@ function ctxCard(t,l){
 function runDetail(d){
   const arts=d.artifacts||[];
   const st=(d.stages||[]).map(s=>`<span style="white-space:nowrap">${stages([s])}${esc(s.name)} rc=${s.rc}</span>`).join(' &nbsp;');
-  return card(`<h2>${esc(d.date)} ${hm(d.when)}</h2><div>${tlabel(d.slug,d.title,d.project)}</div><div class="note mono">${esc(d.slug)}</div>${st?`<div class="note" style="margin-top:8px">${st}</div>`:''}<div style="margin-top:10px"><button class="lnk" data-open="task:${esca(d.slug)}">태스크 상세 →</button></div>`)
+  return card(`<h2>${esc(d.date)} ${hm(d.when)}</h2><div>${tlabelCp(d.slug,d.title,d.project)}</div><div class="note mono">${esc(d.slug)}</div>${st?`<div class="note" style="margin-top:8px">${st}</div>`:''}<div style="margin-top:10px"><button class="lnk" data-open="task:${esca(d.slug)}">태스크 상세 →</button></div>`)
     +ctxCard(d.task||{},d.ledger||{})
     +card(`<h2>산출물 <span class="cnt">${arts.length}</span></h2>${arts.length?arts.map((a,i)=>`<details${i===arts.length-1?' open':''}><summary>${esc(a.name)} <span class="age">${sz(a.size||0)}</span></summary>${pre(a.content)}${a.truncated?'<div class="note">— 서버 상한에서 잘림 —</div>':''}</details>`).join(''):empty('산출물 없음')}`)
     +card(d.log_tail?`<details><summary>run.log ${d.log_truncated?'<span class="age">끝부분만</span>':''}</summary>${pre(d.log_tail,1)}</details>`:empty('run.log 없음'));
@@ -1695,7 +1758,7 @@ function runDetail(d){
 const taskRunRow=r=>{const n=r.run||'';return `<div class="row clk" data-open="run:${esca(n)}"><div class="main"><div class="mono">${esc(n.slice(0,4))}-${esc(n.slice(4,6))}-${esc(n.slice(6,8))} ${hm(r.when)}</div><div class="note">${stages(r.stages)||'—'}${(r.artifacts||[]).length?' · '+esc(r.artifacts.join(', ')):''}</div></div><span class="age">›</span></div>`};
 function taskDetail(d){
   const runs=d.runs||[];
-  return card(`<div>${tlabel(d.slug,d.title,d.project)}</div><div class="note mono">${esc(d.slug)}</div>`)
+  return card(`<div>${tlabelCp(d.slug,d.title,d.project)}</div><div class="note mono">${esc(d.slug)}</div>`)
     +ctxCard(d.task||{},d.ledger||{})
     +card(`<h2>실행 <span class="cnt">${runs.length}</span></h2><div class="list">${runs.length?runs.map(taskRunRow).join(''):empty('실행 기록 없음')}</div>`)
     +(d.body?card(`<details open><summary>태스크 본문</summary>${pre(d.body)}${d.body_truncated?'<div class="note">— 서버 상한에서 잘림 —</div>':''}</details>`):'');
@@ -1733,7 +1796,7 @@ function mount(){
       const ar=gh.querySelector('.gar');if(ar)ar.textContent=now?'▾':'▸';return}
     const o=e.target.closest('[data-open]');if(o){openDetail(o.dataset.open);return}
     const m=e.target.closest('.more');if(m){const sec=m.dataset.sec;showAll[sec]=!showAll[sec];
-      if(last){if(sec==='runs')fillMore('runs',last.runs,runRow);else if(sec==='recent')fillMore('recent',last.recent,recentRow)}}
+      if(last){if(sec==='recent')renderHistory(last);else update(last)}}
   });
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&dstack.length)history.back()});
   mounted=true;
