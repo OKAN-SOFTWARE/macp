@@ -33,6 +33,10 @@ After edits:
 1. Update the task body's open checkboxes that are now satisfied (`- [ ]` → `- [x]`).
 2. Append a Progress Log entry: `- YYYY-MM-DD: <한 줄 요약> (delegate agent)`.
 3. Bump `updated:` in the task frontmatter to today.
+   - 태스크 frontmatter에 `touches:`(같은 리포 태스크의 동시 실행 적격 판정용
+     path-glob 리스트)가 있으면 **보존**한다. `repo:`가 있는 auto/quick 태스크인데 없으면
+     이 태스크가 건드릴 파일을 정확한 경로로 채운다(bare 문자열·빈 리스트 금지 — task_validate가
+     ERROR; 와일드카드가 든 파일명은 디렉토리 전체로 읽혀 형제 태스크와 겹친다).
 4. Commit on `worker/<slug>` with message: `chore(delegate): <slug> — <short description>`.
 
 ## Hard rules

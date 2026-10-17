@@ -131,6 +131,12 @@ estimate_p90: 60m
 # model_tier: heavy | standard | light — optional; see "Model tier" below
 model_tier: standard
 review_cycle: "-"
+# touches: OPTIONAL — 같은 리포(= 같은 체크아웃) 태스크의 동시 실행 적격 판정용
+#   path-glob 리스트. 서로소로 적는다(아래 "External-repo fields" 참고). bare
+#   문자열·빈 리스트 금지(task_validate가 ERROR). 와일드카드가 든 컴포넌트부터는
+#   정적 접두(디렉토리)만 비교하므로 같은 디렉토리의 파일은 정확한 파일명으로 적는다:
+# touches:
+#   - "shared/src/commonMain/kotlin/com/example/ui/App.kt"
 ---
 
 # Task Title
@@ -336,6 +342,17 @@ A task whose work happens in a project repo (not the vault) MUST carry:
   vault task: no working_dir, no build, and it parks as `awaiting_human`.
 - `allowed_tools:` — including the project's build/test runner (e.g. `Bash(./gradlew:*)`).
 - `auto_merge: true` — unless the task genuinely needs human review.
+- `touches:` — REQUIRED for every `repo:` auto/quick task you create (2026-10-17 user decision:
+  without it the task is serialised behind every other task of the same repo, and on
+  2026-10-17 that held 5 if-then-habits tasks in line while the usage guard had 4 idle slots).
+  Two same-repo tasks run concurrently only when BOTH declare a **disjoint** path-glob list
+  and neither `depends_on` the other (`max_parallel_per_repo`, HQ = 2). Write a non-empty
+  YAML list of the files the task will edit, repo-relative; never a bare string or an empty
+  list (task_validate flags both as ERROR — the inverse of `allowed_tools`, which must be a
+  string). The overlap test compares only the static prefix before the first wildcard, so a
+  wildcard in the file name collapses to its directory and overlaps every sibling — name
+  existing files exactly (e.g. `.../ui/care/CareViewModel.kt`), and list new files only when
+  you know their exact path. Example: `touches: ["shared/src/commonMain/kotlin/com/ifthenhabits/app/ui/App.kt"]`.
 
 For a followup (`from_followup:`) or leaf, copy these three fields from the source
 task / a sibling task of the same repo (`grep -l "repo: .*<project>" Todo/items/*.md`).
