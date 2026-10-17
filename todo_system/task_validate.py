@@ -183,6 +183,48 @@ def _check_decision_gate(fm: dict) -> list[Issue]:
     return issues
 
 
+# if-then-habits (2026-10-17): five candidates were held 201 times with
+# "겹침 미판정 (touches 없음)". Two authoring mistakes produce that: a repo task
+# that declares no touches at all (always serialised), and a glob that puts the
+# wildcard in the filename (`dir/Foo*Test.kt`). The dispatcher compares globs by
+# static prefix only, so the latter reads as all of `dir` and overlaps every
+# sibling. Both run fine — they just never run in parallel — so they are WARNs.
+_TOUCHES_REQUIRED_MODES = frozenset({"auto", "quick", "delegate"})
+
+
+def _check_touches_filename_globs(globs: list[str]) -> list[Issue]:
+    # The runtime's own prefix rule, not a copy, so this cannot drift from the
+    # dispatcher. Lazy for the same cycle reason as task_deps above.
+    from .orchestrator.orchestrator import _static_prefix
+
+    issues: list[Issue] = []
+    for glob in globs:
+        last = glob.strip().strip("/").split("/")[-1]
+        if last in ("*", "**") or not any(ch in last for ch in "*?["):
+            continue
+        prefix = _static_prefix(glob)
+        if prefix:
+            reach = (
+                f"정적 접두 `{prefix}`로 읽는다 — `{prefix}` 아래 전부(형제 파일 "
+                "포함)와 겹쳐 직렬화된다. 디렉토리 의도면 "
+                f"`{prefix}/**`, 아니면 파일 경로를 하나씩 열거할 것."
+            )
+        else:
+            reach = (
+                "정적 접두를 빈 문자열로 읽는다 — 같은 repo의 모든 태스크와 겹쳐 "
+                "직렬화된다. 리포 루트 기준 경로를 적을 것."
+            )
+        issues.append(
+            Issue(
+                WARN,
+                "touches",
+                f"{glob!r}: 파일명 컴포넌트에 와일드카드가 있어 디스패처"
+                f"(_static_prefix)는 {reach}",
+            )
+        )
+    return issues
+
+
 def _check_bash_patterns(tools: str) -> list[Issue]:
     """Check Bash(...) rules against how this vault actually delivers them.
 
@@ -302,6 +344,8 @@ def validate_frontmatter(fm: dict, body: str = "") -> list[Issue]:
                     "every entry must be a non-empty glob string.",
                 )
             )
+        else:
+            issues.extend(_check_touches_filename_globs(raw_touches))
 
     # This parser keeps everything after an unquoted value, inline comment and
     # all, so `worker_mode: auto  # auto | off` resolves to the whole string and
@@ -335,6 +379,29 @@ def validate_frontmatter(fm: dict, body: str = "") -> list[Issue]:
                 "worker_mode",
                 f"unrecognised value {mode!r}; expected one of "
                 f"{', '.join(sorted(m for m in known_worker_modes() if m))}.",
+            )
+        )
+
+    # A runnable repo task without touches can never be proven disjoint from
+    # its siblings, so the dispatcher serialises it against every other task
+    # on that repo. Vault tasks (no repo) and parked modes are not dispatched
+    # against siblings this way.
+    repo = fm.get("repo")
+    if (
+        isinstance(repo, str)
+        and repo.strip()
+        and "worker_mode" not in contaminated
+        and str(mode or "").strip().lower() in _TOUCHES_REQUIRED_MODES
+        and raw_touches is None
+    ):
+        issues.append(
+            Issue(
+                WARN,
+                "touches",
+                "repo 태스크인데 touches가 없다 — 디스패처가 겹침을 판정할 수 없어"
+                "(`겹침 미판정 (touches 없음)`) 같은 repo의 다른 태스크와 항상 "
+                "직렬화된다. 이 태스크가 건드릴 경로 glob 리스트를 적을 것 "
+                "(예: `src/feature/**`).",
             )
         )
 

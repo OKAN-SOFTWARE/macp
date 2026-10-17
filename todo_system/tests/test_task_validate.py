@@ -256,6 +256,57 @@ def test_mapping_touches_is_an_error():
     assert _levels(issues, "touches") == [tv.ERROR]
 
 
+REPO = "https://example.invalid/r.git"
+
+
+def test_repo_auto_task_without_touches_warns():
+    """A runnable repo task without touches is serialised against every sibling
+    on that repo ("겹침 미판정 (touches 없음)") — warn at authoring time."""
+    for mode in ("auto", "quick", "delegate", " Auto "):
+        issues = tv.validate_frontmatter({"repo": REPO, "worker_mode": mode})
+        assert _levels(issues, "touches") == [tv.WARN], mode
+        assert len(issues) == 1, mode
+
+
+def test_repo_auto_task_with_touches_is_clean():
+    assert tv.validate_frontmatter(
+        {"repo": REPO, "worker_mode": "auto", "touches": ["src/**"]}
+    ) == []
+
+
+def test_vault_task_without_repo_does_not_warn_about_touches():
+    assert tv.validate_frontmatter({"worker_mode": "auto"}) == []
+    for mode in ("blocked", "manual"):
+        issues = tv.validate_frontmatter({"repo": REPO, "worker_mode": mode})
+        assert _levels(issues, "touches") == [], mode
+
+
+def test_contaminated_worker_mode_skips_touches_warn():
+    """The inline-comment ERROR already names the cause; don't pile on."""
+    issues = tv.validate_frontmatter({"repo": REPO, "worker_mode": "auto # x"})
+    assert _levels(issues, "touches") == []
+    assert _levels(issues, "worker_mode") == [tv.ERROR]
+
+
+def test_wildcard_filename_touches_warns_with_static_prefix():
+    """The dispatcher reads `a/b/Foo*Test.kt` as its static prefix `a/b`, so it
+    overlaps every sibling under a/b — the message must say so."""
+    issues = tv.validate_frontmatter({"touches": ["a/b/Foo*Test.kt"]})
+    assert _levels(issues, "touches") == [tv.WARN]
+    assert "`a/b`" in issues[0].message
+
+
+def test_wildcard_filename_at_root_names_the_empty_prefix():
+    issues = tv.validate_frontmatter({"touches": ["Foo*Test.kt"]})
+    assert _levels(issues, "touches") == [tv.WARN]
+    assert "빈 문자열" in issues[0].message
+
+
+def test_directory_intent_touches_globs_are_clean():
+    for globs in (["a/b/**"], ["a/b/*"], ["a/b/c.py"], ["a/b/**/"]):
+        assert tv.validate_frontmatter({"touches": globs}) == [], globs
+
+
 def test_not_before_time_values_are_clean(tmp_path):
     """All three not_before shapes validate with no issue, quoted or bare."""
     for value in ("2026-10-12", '"2026-10-12 17:00"', "2026-10-12 17:00",

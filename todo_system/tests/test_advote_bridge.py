@@ -315,7 +315,10 @@ def test_voting_app_low_risk_above_threshold_is_auto(tmp_path):
     sugg["origin"] = "voting_app"
     sugg["voteTotal"] = 15
     md, fm, errors, warns = _render_and_parse(sugg, tmp_path)
-    assert errors == [] and warns == []
+    assert errors == []
+    # The bridge cannot know in advance which files a feedback task will touch,
+    # so the generated auto task carries the always-serialised touches WARN.
+    assert [w.field for w in warns] == ["touches"]
     assert fm["worker_mode"] == "auto"        # low-risk category + votes >= threshold
     assert fm["priority"] == "55"             # vote_priority(15) == 40 + 15
     assert fm["auto_merge"] == "true"
