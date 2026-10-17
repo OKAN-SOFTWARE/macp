@@ -16,9 +16,12 @@ would otherwise write into the live vault.
   test's tmp dir.
 
 Runtime files — ``Worker/_state/runner_heartbeat``, ``Worker/queue.lock`` and
-``Todo/todo.db`` resolve from ``__file__``, so a test that reaches them writes
-into whichever checkout it runs in (changing cwd does not help). The suite did
-reach them, and leftover files were the mild half of it:
+``Todo/todo.db`` derive from the vault root (``paths.vault_root()``:
+``MACP_VAULT_ROOT`` when set, else this checkout), so a test that reaches them
+writes into that vault (changing cwd does not help). The redirect is keyed on
+the root each module built them from, so an env vault outside the checkout
+redirects the same way. The suite did reach them, and leftover files were the
+mild half of it:
 
 * ``Runner.poll_once`` writes the heartbeat and deletes it again. In the live
   vault that overwrites and then deletes the REAL runner's heartbeat, so the
@@ -37,7 +40,9 @@ The live mailbox — ``Worker/agents/`` (``<agent>/inbox/*.json`` envelopes,
 opened the default mailbox from the checkout root once left a real TASK_ASSIGN
 in an inbox; a squash merge carried it into main and it dispatched no-op runs.
 Its root is cwd-relative (``mailbox.DEFAULT_ROOT``), so no module attribute
-names it, and envelope names are random ids, so no basename matches them.
+names it, and envelope names are random ids, so no basename matches them. Two
+trees are guarded: this checkout's, which tests running from its root reach,
+and the vault's, which differs only when ``MACP_VAULT_ROOT`` names another one.
 
 Two layers, so a missed row cannot pass silently:
 
@@ -60,8 +65,8 @@ Two layers, so a missed row cannot pass silently:
 Limits of the mailbox tree guard: ``mkdir`` is not an audit event, so an empty
 directory can still appear under the tree (the redirect is what keeps
 ``send()`` from making one); a path that reaches the tree only through a
-symlink passes the hook's cheap prefix check; a cwd inside another checkout is
-that checkout's tree, not this one. The live inbox is left out of the session
+symlink passes the hook's cheap prefix check; a cwd inside a checkout other
+than this one or the env vault is that checkout's tree, not guarded. The live inbox is left out of the session
 existence check, since the live orchestrator and runners change it by themselves.
 
 The ~/Worker clones — ``StagedExecutor._execute`` calls the run-start disk guard
@@ -113,10 +118,25 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 # them — so the redirect is keyed on the real file, never on a leftover patch.
 _REAL_RUNTIME = types.MappingProxyType(
     {(module, attr): getattr(module, attr) for module, attr in _RUNTIME_PATHS})
-# The live mailbox tree. Its root is cwd-relative, so this is the one tests
-# running from the checkout root reach.
-_LIVE_MAILBOX_ROOT = _REPO_ROOT / mailbox.DEFAULT_ROOT
+# The vault root each module built its rows from, captured with them. Lexical,
+# like the rows, so relative_to() never trips over a symlink or a resolve().
+# MACP_VAULT_ROOT can put it outside this checkout (a worker stage testing a
+# worktree names the live vault); unset, it is this checkout.
+_RUNTIME_ANCHORS = types.MappingProxyType(
+    {worker: worker.ROOT, cli: cli.ROOT, metrics: metrics._ROOT})
+# The live mailbox trees, realpath -> realpath of the root it hangs off: the
+# checkout's (the root is cwd-relative, so tests running from the checkout root
+# reach it) and the vault's. With no env they are one tree.
+_LIVE_MAILBOX_ROOTS = types.MappingProxyType(
+    {os.path.realpath(anchor / mailbox.DEFAULT_ROOT): os.path.realpath(anchor)
+     for anchor in (_REPO_ROOT, worker.ROOT)})
 _REAL_MAILBOX_INIT = mailbox.Mailbox.__init__
+
+
+def _redirect_target(redirect, real, anchor):
+    # Raises if a row was built from a root missing from _RUNTIME_ANCHORS:
+    # loud beats a silently mis-mapped redirect.
+    return redirect / real.relative_to(anchor)
 
 
 class RealRuntimePathTouched(PermissionError):
@@ -293,7 +313,7 @@ class _RuntimePathTripwire:
         return tuple(frames)
 
 
-_TRIPWIRE = _RuntimePathTripwire(_REAL_RUNTIME.values(), trees=(_LIVE_MAILBOX_ROOT,))
+_TRIPWIRE = _RuntimePathTripwire(_REAL_RUNTIME.values(), trees=tuple(_LIVE_MAILBOX_ROOTS))
 sys.addaudithook(_TRIPWIRE)
 
 
@@ -316,22 +336,23 @@ def _browser_watch_isolated(tmp_path, monkeypatch):
 @pytest.fixture(autouse=True)
 def _runtime_paths_isolated(tmp_path_factory, monkeypatch):
     # mktemp rather than tmp_path, so a test that lists its own tmp_path sees
-    # nothing new. The redirect mirrors the checkout layout, which is what makes
+    # nothing new. The redirect mirrors the vault layout, which is what makes
     # two rows naming one real file (cli.DB_PATH, metrics.DB) share a tmp file.
     redirect = tmp_path_factory.mktemp("macp-runtime")
     for module, attr in _RUNTIME_PATHS:
-        target = redirect / _REAL_RUNTIME[module, attr].relative_to(_REPO_ROOT)
+        target = _redirect_target(redirect, _REAL_RUNTIME[module, attr], _RUNTIME_ANCHORS[module])
         target.parent.mkdir(parents=True, exist_ok=True)   # sqlite3.connect won't
         monkeypatch.setattr(module, attr, target)
     # The mailbox root is cwd-relative, so there is no attribute to rebind:
     # every transport and every way of opening one goes through Mailbox.__init__.
-    live = os.path.realpath(_LIVE_MAILBOX_ROOT)
 
     def _redirected_init(self, root, *args, **kwargs):
         real = os.path.realpath(root)
-        if real == live or real.startswith(live + os.sep):
-            root = redirect / os.path.relpath(real, _REPO_ROOT)
-            root.mkdir(parents=True, exist_ok=True)     # GitMailbox runs git with cwd=root
+        for live, anchor in _LIVE_MAILBOX_ROOTS.items():
+            if real == live or real.startswith(live + os.sep):
+                root = redirect / os.path.relpath(real, anchor)
+                root.mkdir(parents=True, exist_ok=True)     # GitMailbox runs git with cwd=root
+                break
         _REAL_MAILBOX_INIT(self, root, *args, **kwargs)
 
     monkeypatch.setattr(mailbox.Mailbox, "__init__", _redirected_init)
@@ -377,6 +398,18 @@ def _real_runtime_untouched():
 def real_runtime_paths():
     """The unredirected values, keyed like the ``_RUNTIME_PATHS`` rows."""
     return _REAL_RUNTIME
+
+
+@pytest.fixture
+def real_runtime_anchors():
+    """The vault root each ``_RUNTIME_PATHS`` module built its rows from."""
+    return _RUNTIME_ANCHORS
+
+
+@pytest.fixture
+def runtime_redirect_target():
+    """``(redirect, real, anchor) -> tmp path`` — the mapping the redirect uses."""
+    return _redirect_target
 
 
 @pytest.fixture

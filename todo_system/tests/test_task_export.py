@@ -24,6 +24,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -312,12 +313,15 @@ def test_default_root_is_the_live_vault():
 
 @_vault_only_byte_identity
 def test_default_vault_root_is_byte_identical_repo_root_when_env_unset(monkeypatch):
+    env = os.environ.get("MACP_VAULT_ROOT")    # what the module saw at import
     monkeypatch.delenv("MACP_VAULT_ROOT", raising=False)
     install = Path(tx.__file__).resolve().parents[1]
     # The .macp marker at the install root makes the resolver return that root
     # unchanged — exactly the value the old hard-coded parents[1] produced.
     assert paths.vault_root(start=install) == install
-    assert tx.DEFAULT_VAULT_ROOT == install
+    # The constant holds the resolver's import-time value: the install root
+    # when the env was unset, the env vault when a worker stage set it.
+    assert tx.DEFAULT_VAULT_ROOT == (Path(env).expanduser() if env else install)
 
 
 def test_default_vault_root_is_redirectable_via_macp_vault_root_env(monkeypatch, tmp_path):

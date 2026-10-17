@@ -180,15 +180,16 @@ class RunnerVaultDataRootSplitTest(unittest.TestCase):
         """AC#2: with MACP_VAULT_ROOT unset (the installed config) every replaced
         line resolves to the exact path the REPO_ROOT alias always returned."""
         anchor = Path(stages.__file__).resolve().parents[2]
+        env = os.environ.get("MACP_VAULT_ROOT")    # what stages saw at import
         # The resolver, env cleared, returns the engine anchor — the value
         # _VAULT_DATA_ROOT is computed from at import in the shipped config.
         with mock.patch.dict(os.environ, clear=False):
             os.environ.pop("MACP_VAULT_ROOT", None)
             self.assertEqual(paths.vault_root(start=anchor), anchor)
         # …and the imported constants agree, so the 11 runner lines are unchanged.
-        self.assertEqual(stages._VAULT_DATA_ROOT, anchor)
+        # A worker stage sets the env before import; the constant then holds it.
+        self.assertEqual(stages._VAULT_DATA_ROOT, Path(env).expanduser() if env else anchor)
         self.assertEqual(stages._ENGINE_ROOT, anchor)
-        self.assertEqual(stages._VAULT_DATA_ROOT, stages._ENGINE_ROOT)
 
     def test_the_split_is_not_a_rename_redirect_moves_only_vault_data(self):
         """The migration would be pointless if the two roots could never differ:

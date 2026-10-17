@@ -12,6 +12,7 @@ git repos with an explicit ``root`` argument, so they need no vault redirection.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -409,14 +410,16 @@ _vault_only_byte_identity = pytest.mark.skipif(
 
 @_vault_only_byte_identity
 def test_root_is_byte_identical_repo_root_when_env_unset(monkeypatch):
+    env = os.environ.get("MACP_VAULT_ROOT")    # what the module saw at import
     monkeypatch.delenv("MACP_VAULT_ROOT", raising=False)
     install = Path(session_end.__file__).resolve().parents[1]
     # The .macp marker at the install root makes the resolver return that root
     # unchanged — exactly the value the old hard-coded parents[1] produced.
     assert paths.vault_root(start=install) == install
     assert (install / "todo_system" / "session_end.py").is_file()  # a real root
-    # ...and the module actually holds that value.
-    assert session_end.ROOT == install
+    # ...and the module actually holds that value (the env vault instead when
+    # a worker stage set MACP_VAULT_ROOT before import).
+    assert session_end.ROOT == (Path(env).expanduser() if env else install)
 
 
 def test_root_is_redirectable_via_macp_vault_root_env(monkeypatch, tmp_path):

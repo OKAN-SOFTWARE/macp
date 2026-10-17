@@ -12,6 +12,8 @@ from __future__ import annotations
 import os
 import shutil
 import sqlite3
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -20,7 +22,7 @@ import todo_system
 from todo_system import cli, worker
 from todo_system.orchestrator import message as m
 from todo_system.orchestrator import metrics
-from todo_system.orchestrator.mailbox import FileMailbox
+from todo_system.orchestrator.mailbox import DEFAULT_ROOT, FileMailbox
 from todo_system.orchestrator.registry import Agent
 from todo_system.orchestrator.runner import ExecOutcome, Runner
 
@@ -30,8 +32,8 @@ _NOTES = (("NOW_PATH", "NOW.md"), ("FOCUS_PATH", "FOCUS.md"),
           ("DASHBOARD_PATH", "Dashboard.md"))
 
 
-def test_every_runtime_path_is_redirected(real_runtime_paths, runtime_tripwire,
-                                          tmp_path_factory):
+def test_every_runtime_path_is_redirected(real_runtime_paths, real_runtime_anchors,
+                                          runtime_tripwire, tmp_path_factory):
     # The files the suite used to leave behind, and the live notes, are covered
     # by name: a dropped row would otherwise just shrink the loop below.
     assert {(worker, "RUNNER_HEARTBEAT_PATH"), (worker, "QUEUE_LOCK_PATH"),
@@ -44,7 +46,7 @@ def test_every_runtime_path_is_redirected(real_runtime_paths, runtime_tripwire,
         now = getattr(module, attr)
         assert now != real, f"{module.__name__}.{attr} still points at the checkout"
         assert now.is_relative_to(base), f"{module.__name__}.{attr} = {now}"
-        assert real.is_relative_to(REPO_ROOT), f"{module.__name__}.{attr} = {real}"
+        assert real.is_relative_to(real_runtime_anchors[module]), f"{module.__name__}.{attr} = {real}"
     # One real file, one redirect: metrics must read the DB cli writes.
     assert metrics.DB == cli.DB_PATH
     assert runtime_tripwire.protected == {os.path.realpath(p) for p in real_runtime_paths.values()}
@@ -152,3 +154,60 @@ def test_tripwire_blocks_and_records(tmp_path, monkeypatch, runtime_tripwire, re
     assert all(h.stack for h in hits)
     # Kept off the session list: guarding() is for a test's own targets.
     assert len(runtime_tripwire.hits) == session_before
+
+
+def test_suite_runs_with_vault_root_outside_the_checkout(tmp_path):
+    """MACP_VAULT_ROOT outside the checkout — a worker stage testing a worktree
+    while the env names the live vault — must not break the redirect.
+
+    The rows are built from the env's vault root, not from this checkout, so a
+    redirect keyed on the checkout failed every test at setup with ``ValueError:
+    … is not in the subpath of …``. A child pytest gets the env, since the rows
+    are captured when the conftest is imported.
+    """
+    vault = tmp_path / "vault"
+    (vault / ".macp").mkdir(parents=True)
+    (vault / ".macp" / "config.toml").write_text("", encoding="utf-8")
+    before = sorted(vault.rglob("*"))
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("PYTEST_ADDOPTS", "PYTEST_CURRENT_TEST")}
+    env["MACP_VAULT_ROOT"] = str(vault)
+    here = Path(__file__).resolve()
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider",
+         f"--basetemp={tmp_path / 'bt'}",
+         f"{here}::test_every_runtime_path_is_redirected",
+         f"{here}::test_writers_land_in_the_redirect"],
+        cwd=REPO_ROOT, env=env, capture_output=True, text=True, timeout=300)
+    assert proc.returncode == 0, proc.stdout[-4000:] + proc.stderr[-2000:]
+    assert "2 passed" in proc.stdout
+    # The redirect did not leak into the vault the env names.
+    assert sorted(vault.rglob("*")) == before
+
+
+def test_redirect_target_for_a_vault_outside_the_checkout(
+        real_runtime_paths, real_runtime_anchors, runtime_redirect_target,
+        tmp_path_factory, tmp_path):
+    # Rows re-derived from a vault that is not this checkout, as MACP_VAULT_ROOT
+    # makes them. The old anchor cannot place them; the vault root can.
+    fake_vault = tmp_path / "live-vault"
+    redirect = tmp_path_factory.mktemp("probe")
+    base = tmp_path_factory.getbasetemp()
+    targets = {}
+    for (module, attr), real in real_runtime_paths.items():
+        fake_real = fake_vault / real.relative_to(real_runtime_anchors[module])
+        with pytest.raises(ValueError):
+            fake_real.relative_to(REPO_ROOT)
+        target = runtime_redirect_target(redirect, fake_real, fake_vault)
+        assert target.is_relative_to(redirect), f"{module.__name__}.{attr} = {target}"
+        assert target.is_relative_to(base)
+        assert not target.is_relative_to(fake_vault)
+        targets[module, attr] = target
+    assert targets[cli, "DB_PATH"] == targets[metrics, "DB"]
+
+
+def test_both_live_mailbox_trees_are_guarded(runtime_tripwire):
+    # The checkout's tree (the cwd-relative default) and the vault's; one tree
+    # when MACP_VAULT_ROOT is unset or names this checkout.
+    assert {os.path.realpath(REPO_ROOT / DEFAULT_ROOT),
+            os.path.realpath(worker.ROOT / DEFAULT_ROOT)} <= runtime_tripwire.trees
