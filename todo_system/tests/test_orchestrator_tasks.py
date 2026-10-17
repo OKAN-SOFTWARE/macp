@@ -50,6 +50,11 @@ _EXT_MD = (
     "bypass_guard: true\n"
     "model_tier: Heavy\n"
     "estimate_p90: 4h\n"
+    "touches:\n"
+    '  - "app/src/main/Foo.kt"\n'
+    '  - "shared/src/commonMain/Bar.kt"\n'
+    "depends_on:\n"
+    "  - other-task\n"
     "---\n"
     "# ext\n"
 )
@@ -110,6 +115,8 @@ class LoadDispatchablePayloadTest(unittest.TestCase):
             "estimate_p90": "4h",
             "repo": "https://h/x/ext-proj.git",
             "working_dir": "sub/dir",
+            "touches": ["app/src/main/Foo.kt", "shared/src/commonMain/Bar.kt"],
+            "depends_on": ["other-task"],
         }
         self.assertEqual(by_slug["ext"], expected_ext)
         self.assertEqual(list(by_slug["ext"].keys()), list(expected_ext.keys()))
@@ -180,6 +187,34 @@ class LoadDispatchablePayloadTest(unittest.TestCase):
         expected["estimate_p90"] = "90m"
         self.assertEqual(self._load([_row("man", path, "manual")], only_auto=False),
                          {"man": expected})
+
+    # `touches` / `depends_on`: the same-repo concurrency inputs. Only a real
+    # YAML list is carried; a bare string or an empty list leaves the key absent
+    # (matching orchestrator._as_glob_list, which reads both as "none declared").
+
+    def test_touches_bare_string_and_empty_list_are_absent(self):
+        bare = self._md("bare.md", '---\ntouches: "app/**"\ndepends_on: other\n---\n# b\n')
+        empty = self._md("empty.md", "---\ntouches: []\ndepends_on: []\n---\n# e\n")
+        got = self._load([_row("bare", bare), _row("empty", empty)])
+        self.assertEqual(got, {"bare": _base("bare", bare), "empty": _base("empty", empty)})
+
+    def test_touches_list_entries_are_stripped_and_non_strings_dropped(self):
+        path = self._md("mixed.md", '---\ntouches:\n  - " a/b.py "\n  - 3\n  - ""\n---\n# m\n')
+        expected = _base("mixed", path)
+        expected["touches"] = ["a/b.py"]
+        self.assertEqual(self._load([_row("mixed", path)]), {"mixed": expected})
+
+    def test_loaded_payloads_feed_the_concurrency_predicate(self):
+        # End-to-end seam: two same-repo tasks whose markdown declares disjoint
+        # `touches` must come out of the loader as concurrency-eligible. Before
+        # 2026-10-17 the loader dropped the field and this was always False.
+        from todo_system.orchestrator.orchestrator import Orchestrator
+        a = self._md("a.md", '---\nrepo: "https://h/x/p.git"\ntouches:\n  - "ui/App.kt"\n---\n# a\n')
+        b = self._md("b.md", '---\nrepo: "https://h/x/p.git"\ntouches:\n  - "care/Model.kt"\n---\n# b\n')
+        c = self._md("c.md", '---\nrepo: "https://h/x/p.git"\n---\n# c (no touches)\n')
+        got = self._load([_row("a", a), _row("b", b), _row("c", c)])
+        self.assertTrue(Orchestrator._can_run_concurrently("a", got["a"], "b", got["b"]))
+        self.assertFalse(Orchestrator._can_run_concurrently("a", got["a"], "c", got["c"]))
 
     def test_reads_each_md_once(self):
         # Every md-sourced field and the drift guard share one parse per task.

@@ -135,6 +135,40 @@ def read_task_estimate_p90(md_path: str | Path) -> str | None:
     return task_estimate_p90_from_fm(_frontmatter(md_path))
 
 
+def _str_list(v) -> list[str]:
+    """A frontmatter value as a list of non-empty strings. Only a real YAML list
+    counts — a bare string yields [] on purpose: the dispatcher's overlap
+    predicate (`orchestrator._as_glob_list`) reads a bare string as "nothing
+    declared", and task_validate flags it as an ERROR, so the loader must not
+    quietly promote it into a one-element list and make the two disagree."""
+    if not isinstance(v, (list, tuple)):
+        return []
+    return [x.strip() for x in v if isinstance(x, str) and x.strip()]
+
+
+def task_touches_from_fm(fm: dict) -> list[str]:
+    return _str_list(fm.get("touches"))
+
+
+def read_task_touches(md_path: str | Path) -> list[str]:
+    """A task's `touches:` — the repo-relative path globs it will edit. Two tasks
+    of the same repo may run at once only when BOTH declare disjoint lists
+    (Orchestrator._can_run_concurrently). Until 2026-10-17 the loader never
+    copied this field into the payload, so the predicate always saw [] and every
+    same-repo pair was serialised regardless of what the markdown said."""
+    return task_touches_from_fm(_frontmatter(md_path))
+
+
+def task_depends_on_from_fm(fm: dict) -> list[str]:
+    return _str_list(fm.get("depends_on"))
+
+
+def read_task_depends_on(md_path: str | Path) -> list[str]:
+    """A task's `depends_on:` slugs — the same predicate serialises a pair when
+    either depends on the other, and it reads the edge off the payload."""
+    return task_depends_on_from_fm(_frontmatter(md_path))
+
+
 def task_worker_mode_from_fm(fm: dict) -> str | None:
     raw = fm.get("worker_mode")
     # A bare `worker_mode: off` (also no/false) is YAML 1.1 boolean False;

@@ -131,6 +131,15 @@ def load_dispatchable(db_path: str | Path = DEFAULT_DB,
             payload["repo"] = repo_url
         if working_dir:
             payload["working_dir"] = working_dir
+        # Same-repo concurrency inputs (orchestrator._can_run_concurrently reads
+        # both off the payload). Absent when the markdown declares none, so the
+        # predicate's "nothing declared → serialise" branch stays reachable.
+        touches = repos.task_touches_from_fm(fm)
+        if touches:
+            payload["touches"] = touches
+        depends_on = repos.task_depends_on_from_fm(fm)
+        if depends_on:
+            payload["depends_on"] = depends_on
         tasks.append(Task(slug=r["slug"], payload=payload))
     return tasks
 
