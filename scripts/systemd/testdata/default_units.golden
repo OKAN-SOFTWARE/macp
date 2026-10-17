@@ -502,8 +502,8 @@ JAVA_HOME=/usr/lib/jvm/java-17-openjdk-amd64
 ANDROID_HOME=/srv/neutral-home/Android/sdk
 ANDROID_SDK_ROOT=/srv/neutral-home/Android/sdk
 PYTHONUNBUFFERED=1
-MACP_HOST_ID=macp-hq
-CLAUDE_RC_NAME=macp-hq
+MACP_HOST_ID=macp-host
+CLAUDE_RC_NAME=macp-host
 # Pin the daemon's effective label prefix / calendar id in the process env so
 # daemonctl.label_prefix() resolves them regardless of the unit's WorkingDirectory
 # (env is highest priority). Empty when this host has no config/env → the resolver

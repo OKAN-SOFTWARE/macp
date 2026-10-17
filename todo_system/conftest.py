@@ -67,7 +67,7 @@ existence check, since the live orchestrator and runners change it by themselves
 The ~/Worker clones — ``StagedExecutor._execute`` calls the run-start disk guard
 (``orchestrator/disk_guard.py``) on every run, and below its 3 GiB trigger the
 guard runs git probes and ``./gradlew clean`` in the clones under ~/Worker. That
-is not hypothetical: macp-hq had 2.2–2.6G free on 2026-09-19, so every
+is not hypothetical: the HQ host had 2.2–2.6G free on 2026-09-19, so every
 unisolated ``_execute`` test would have fired it. ``_disk_guard_isolated`` sets
 the guard's kill switch (``MACP_DISK_GUARD=0``) and points ``WORKER_ROOT``,
 ``ASSIGNMENTS_DIR`` and ``JOBS_DIR`` into a tmp dir for every test. The guard's own

@@ -64,9 +64,11 @@ BROWSER_DIR = Path(os.environ.get("MACP_BROWSER_DIR") or HOME / ".config" / "mac
 #     rollback is a one-line ``systemctl --user enable --now macp-kakao-refresh.timer``.
 INSTALL_ONLY: frozenset[str] = frozenset({"kis-trading-real", "macp-kakao-refresh"})
 
-# Host-identity knobs. Defaults reproduce the macp-hq live units byte-for-byte;
-# a third party clones the public repo and overrides these to render their own.
-HOST_ID = os.environ.get("MACP_HOST_ID", "macp-hq")
+# Host-identity knobs. Neutral defaults: a live host pins its real name in
+# ~/.config/macp/env (MACP_HOST_ID / CLAUDE_RC_NAME), which write_env() never
+# rewrites, and these only feed ENV_TEMPLATE — so rendered units never depend on
+# them. A third party overrides these to render their own env template.
+HOST_ID = os.environ.get("MACP_HOST_ID", "macp-host")
 CLAUDE_RC_NAME = os.environ.get("MACP_CLAUDE_RC_NAME", HOST_ID)
 
 

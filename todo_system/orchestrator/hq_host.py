@@ -1,6 +1,6 @@
 """HQ host guard — which host may dispatch, declared as one git-tracked line.
 
-Two hosts share this vault repo (mac `mac-host`, GCP VM `macp-hq`), and the
+Two hosts share this vault repo (a mac and a GCP VM), and the
 single-writer lease (`Worker/orchestrator.lock`) is gitignored, so it cannot
 elect a dispatcher ACROSS hosts — each host happily grabs its own lease
 (2026-09-11 pilot, `Todo/items/macp-cloud-hq-migration.md`). The marker file

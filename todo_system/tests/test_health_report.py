@@ -61,7 +61,7 @@ SUNDAY = k(2026, 8, 2, 8, 30)
 # verbatim from Worker/assignments/macp-dashboard-public-access.json — the same
 # string as test_orchestrator.MergedButBlockedTest.BLOCKER. A real blocker is a
 # ~300-char sentence, which is why the ledger detail must name slugs only.
-PARK_BLOCKER = ("AC4/AC5 need a human on macp-hq: sudo-enable Tailscale Funnel "
+PARK_BLOCKER = ("AC4/AC5 need a human on acme-hq: sudo-enable Tailscale Funnel "
                 "(operator/sudo required — a forbidden hard rule, and `tailscale` is "
                 "not in the verify whitelist), then from the phone with Tailscale OFF "
                 "confirm no-token→401 / token→200 on the public DNS host. The code "

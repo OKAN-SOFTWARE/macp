@@ -21,7 +21,7 @@ anything but loopback REQUIRES a shared secret in `MACP_DASHBOARD_TOKEN`. Open
 `/?token=<secret>` once — it sets an HttpOnly cookie and every later request
 (including the page's own `/api/status` polling) rides on it. `Authorization:
 Bearer <secret>` works too. On loopback the token is optional. The intended
-production shape on macp-hq is loopback + `tailscale serve` (HTTPS on the
+production shape on the HQ host is loopback + `tailscale serve` (HTTPS on the
 tailnet); the token gate is the safety net for any other exposure path.
 """
 from __future__ import annotations

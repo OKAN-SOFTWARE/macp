@@ -32,7 +32,7 @@ from todo_system.orchestrator.registry import Registry
 
 # The 2026-09-16 19:42 [검토요청] blocker, verbatim (the render that lost its tail).
 BLOCKER_1942 = (
-    "AC4/AC5 need a human on macp-hq: sudo-enable Tailscale Funnel (operator/sudo "
+    "AC4/AC5 need a human on acme-hq: sudo-enable Tailscale Funnel (operator/sudo "
     "required — a forbidden hard rule, and tailscale is not in the verify whitelist), "
     "then from the phone with Tailscale OFF confirm the dashboard 401s without a token "
     "and 200s with one."

@@ -629,7 +629,7 @@ class ImportWeightTest(unittest.TestCase):
 class SuiteIsolationTest(unittest.TestCase):
     """(n) todo_system/conftest.py's `_disk_guard_isolated` is live. Without it,
     any _execute test on a host below the trigger would walk the real ~/Worker
-    (macp-hq had 2.2G free the day this was written). No env pop here."""
+    (the HQ host had 2.2G free the day this was written). No env pop here."""
 
     def test_the_kill_switch_is_set_for_every_test(self):
         self.assertEqual(os.environ.get(dg.KILL_ENV), "0")

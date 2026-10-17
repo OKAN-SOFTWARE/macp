@@ -14,7 +14,7 @@ fails ``pytest -q`` with the offending file named in the assertion output:
 * export (``... --export``) — the public export set must stay at zero.
 * engine isolation (``scripts/check_engine_isolation.sh``) — the engine tree
   archived alone still runs against a throwaway vault, with ``UV_OFFLINE=1``
-  so it can never reach the network. Measured 2026-10-08 on macp-hq, warm uv
+  so it can never reach the network. Measured 2026-10-08 on the HQ host, warm uv
   cache: PASS in 6.31s and 3.00s (limit for inclusion was 60s offline). The
   script archives committed HEAD and builds a fresh ``.venv`` in a ``mktemp``
   dir from the uv cache for its four ``uv run`` calls — a host with a cold

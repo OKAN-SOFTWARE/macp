@@ -1,11 +1,11 @@
 """Run-start disk guard — free root-disk space before a run needs it.
 
-macp-hq's root filesystem (`/dev/root`, 48G) is shared by ~/Worker, /tmp and
+The HQ host's root filesystem (`/dev/root`, 48G) is shared by ~/Worker, /tmp and
 the vault. On 2026-09-19 it reached 160M free, and 물꼬 46's first
 `:app:testDebugUnitTest` died 4/4 of ENOSPC while Robolectric copied fonts into
 /tmp. The space had gone to Gradle `build/` output in sibling ~/Worker clones
 nobody was building (0.6–1G each); `./gradlew clean --no-daemon` in three idle
-clones gave back ~2.4G (Memory/entities/macp-hq-vm-root-disk-full-enospc.md).
+clones gave back ~2.4G (the vault's Memory entity on the root-disk ENOSPC).
 A few Android runs later it is full again, so the first aid has to be automatic.
 
 `ensure_free_space` is that first aid, once per run, called from

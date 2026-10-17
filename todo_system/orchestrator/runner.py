@@ -825,7 +825,7 @@ class StagedExecutor(ClaudeCodeExecutor):
                                    {"branch": branch, "checkout_busy": True})
             checkout_lease = acquired   # Lease to release after prep, or None (fail-open)
         # Free root-disk space BEFORE anything below writes to it — branch prep's
-        # `git fetch`, then every stage's build. macp-hq's root filesystem is
+        # `git fetch`, then every stage's build. The HQ host's root filesystem is
         # shared by ~/Worker and /tmp, and at 160M free (2026-09-19) every Android
         # run died of ENOSPC. Here, after the long-job and sibling-hold defers, a
         # dispatch that only polls pays nothing. The guard cleans idle ~/Worker

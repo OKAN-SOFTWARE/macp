@@ -176,14 +176,14 @@ class ParkedUnparkHintTest(unittest.TestCase):
     def test_merged_park_says_close_the_md_not_requeue(self):
         # The worker_mode recipe on a merged row makes reconcile_unparked re-queue
         # it FAILED with the blocker wiped — a retry of work that already merged.
-        self._parked("dash", "AC4/AC5 need a human on macp-hq", self.MERGED_PARK)
+        self._parked("dash", "AC4/AC5 need a human on acme-hq", self.MERGED_PARK)
         block = self._block(dashboard.render(self.led, self.reg), "dash")
         self.assertIn("⛔ blocked_on: AC4/AC5", block)
         self.assertIn("status: done", block)
         self.assertNotIn("worker_mode", block)
 
     def test_merged_and_unmerged_blocked_rows_get_their_own_exit(self):
-        self._parked("dash", "AC4/AC5 need a human on macp-hq", self.MERGED_PARK)
+        self._parked("dash", "AC4/AC5 need a human on acme-hq", self.MERGED_PARK)
         self._parked("eval", "ANTHROPIC_API_KEY 미설정")
         md = dashboard.render(self.led, self.reg)
         dash, ev = self._block(md, "dash"), self._block(md, "eval")

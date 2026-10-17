@@ -1419,7 +1419,7 @@ class AgentsExcludeHumans(unittest.TestCase):
             "    host: mac\n"
             "  - id: worker-default\n"
             "    kind: ai-local\n"
-            "    host: macp-hq\n"
+            "    host: acme-hq\n"
             "    projects: [macp, dripcoffee]\n", encoding="utf-8")
 
     def tearDown(self):
@@ -1439,7 +1439,7 @@ class AgentsExcludeHumans(unittest.TestCase):
         self.assertEqual(set(row), {"id", "kind", "host", "projects",
                                     "last_seen", "age", "alive"})
         self.assertEqual(row["kind"], "ai-local")
-        self.assertEqual(row["host"], "macp-hq")
+        self.assertEqual(row["host"], "acme-hq")
         self.assertEqual(row["projects"], ["macp", "dripcoffee"])
         self.assertTrue(row["last_seen"])
         self.assertIs(row["alive"], True)

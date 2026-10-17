@@ -245,7 +245,7 @@ class TraceTest(unittest.TestCase):
         # it FAILED with the blocker wiped — a retry of work that already merged.
         part = self._ledger_part(self._render(
             slug="never-ran", ledger=self._led("awaiting_human",
-                                               "AC4/AC5 need a human on macp-hq",
+                                               "AC4/AC5 need a human on acme-hq",
                                                self.MERGED_PARK)))
         self.assertIn("파킹", part)                 # still parked: dispatch() stays None
         self.assertIn("dispatch()", part)
@@ -281,7 +281,7 @@ class TraceTest(unittest.TestCase):
         # once the human closes the md, reconcile_merged ends the row DONE with its
         # stamp and blocker still on it; the exit note belongs to the park alone
         part = self._ledger_part(self._render(
-            slug="never-ran", ledger=self._led("done", "AC4/AC5 need a human on macp-hq",
+            slug="never-ran", ledger=self._led("done", "AC4/AC5 need a human on acme-hq",
                                                self.MERGED_PARK)))
         self.assertIn("- blocked_on: AC4/AC5", part)
         self.assertNotIn("파킹", part)

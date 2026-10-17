@@ -21,7 +21,7 @@ whether the safety nets themselves are still alive. Six checks, each mapped
                     alerts in one day drowned the real ones).
 5. 로그 에러      — Traceback/ERROR surge in vault logs/*.{err,out}.log since
                     the previous run (byte cursors in Worker/_state/health.json).
-6. 디스크 여유    — free space on the filesystem under ~/Worker (macp-hq's root,
+6. 디스크 여유    — free space on the filesystem under ~/Worker (the HQ host's root,
                     shared with /tmp) below disk_guard.MIN_FREE_BYTES (09-19:
                     160M left, every Android run died of ENOSPC). The runner's
                     run-start guard already cleans idle clones below that line,
@@ -659,7 +659,7 @@ def tail_new_error_counts(
 
 def gather_disk_usage(disk_usage=None) -> tuple[int, int] | None:
     """(free, total) of the filesystem under ~/Worker, measured exactly as the
-    guard measures it — on macp-hq that is the root filesystem /tmp shares.
+    guard measures it — on the HQ host that is the root filesystem /tmp shares.
     None when it cannot be read."""
     return disk_guard.measure(disk_usage=disk_usage)
 

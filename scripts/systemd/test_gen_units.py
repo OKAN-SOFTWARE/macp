@@ -201,10 +201,10 @@ class EnableTargetsTest(unittest.TestCase):
 
 class ParameterizationTest(unittest.TestCase):
     """Host-identity knobs (MACP_HOST_ID / MACP_CLAUDE_RC_NAME / MACP_CALENDAR_ID)
-    are env-overridable so a third party can render their own units — but the
-    DEFAULTS must reproduce the macp-hq live units byte-for-byte. The live daemons
-    run this same code, so a default drift here would rewrite the running units on
-    the next gen_units.py (equivalence guard,
+    are env-overridable so a third party can render their own units. The host-id
+    DEFAULTS are neutral: the live host's identity comes from its env file, and
+    HOST_ID only feeds ENV_TEMPLATE (which write_env writes only when the file is
+    missing), so rendered units are unaffected by the default (equivalence guard,
     Todo/items/macp-public-split-4-daemon-params.md if_then)."""
 
     @staticmethod
@@ -225,11 +225,11 @@ class ParameterizationTest(unittest.TestCase):
             spec.loader.exec_module(mod)
             return mod
 
-    def test_defaults_reproduce_macp_hq_env_template(self):
+    def test_defaults_render_neutral_host_id_in_env_template(self):
         mod = self._reload(MACP_HOST_ID=None, MACP_CLAUDE_RC_NAME=None,
                            MACP_CALENDAR_ID=None)
-        self.assertIn("\nMACP_HOST_ID=macp-hq\n", mod.ENV_TEMPLATE)
-        self.assertIn("\nCLAUDE_RC_NAME=macp-hq\n", mod.ENV_TEMPLATE)
+        self.assertIn("\nMACP_HOST_ID=macp-host\n", mod.ENV_TEMPLATE)
+        self.assertIn("\nCLAUDE_RC_NAME=macp-host\n", mod.ENV_TEMPLATE)
 
     def test_env_overrides_take_effect(self):
         # Host-identity ENV_TEMPLATE knobs still honour their env overrides; the

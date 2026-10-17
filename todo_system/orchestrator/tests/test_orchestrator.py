@@ -1542,7 +1542,7 @@ class ReconcileMergedTest(unittest.TestCase):
             with self.subTest(state=state):
                 a = Assignment(task_id="t", agent_id="w", corr_id="C1", state=state,
                                kind="ai-local", payload={"branch": "worker/t", "repo": "o/r"})
-                a.blocked_on = "AC4/AC5 need a human on macp-hq: sudo-enable Tailscale Funnel"
+                a.blocked_on = "AC4/AC5 need a human on acme-hq: sudo-enable Tailscale Funnel"
                 self.ledger.save(a)
                 with mock.patch.object(stages, "gh_pr_merged", return_value=True), \
                         mock.patch.object(tasks, "task_status", return_value="open"), \
@@ -3252,7 +3252,7 @@ class MergedButBlockedTest(_TmpVaultCase):
     history reads FAIL 19:42:38 → reconciled-merged, stamped `blocked`."""
 
     # verbatim from Worker/assignments/macp-dashboard-public-access.json
-    BLOCKER = ("AC4/AC5 need a human on macp-hq: sudo-enable Tailscale Funnel "
+    BLOCKER = ("AC4/AC5 need a human on acme-hq: sudo-enable Tailscale Funnel "
                "(operator/sudo required — a forbidden hard rule, and `tailscale` is "
                "not in the verify whitelist), then from the phone with Tailscale OFF "
                "confirm no-token→401 / token→200 on the public DNS host. The code "
