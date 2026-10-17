@@ -136,7 +136,13 @@ def read_task_estimate_p90(md_path: str | Path) -> str | None:
 
 
 def task_worker_mode_from_fm(fm: dict) -> str | None:
-    v = _clean(fm.get("worker_mode"))
+    raw = fm.get("worker_mode")
+    # A bare `worker_mode: off` (also no/false) is YAML 1.1 boolean False;
+    # `_clean` would drop it as a non-string and the task would fail open.
+    # `is False`, not `== False`: `worker_mode: 0` must not read as off.
+    if raw is False:
+        return "off"
+    v = _clean(raw)
     return v.lower() if v else None
 
 
@@ -150,7 +156,9 @@ def read_task_worker_mode(md_path: str | Path) -> str | None:
     row still says `auto`; re-reading the source-of-truth markdown here lets the
     loader skip that drift. Returns None → the caller trusts the DB (fail-open);
     only a mode the md *explicitly* names drives a skip. Lowercased so a capitalized
-    dispatchable value ("Auto") can't be misread as non-dispatchable."""
+    dispatchable value ("Auto") can't be misread as non-dispatchable. A bare
+    `off` (YAML 1.1 boolean False) reads as 'off'; True and other non-strings
+    stay None (fail-open)."""
     return task_worker_mode_from_fm(_frontmatter(md_path))
 
 

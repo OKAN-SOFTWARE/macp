@@ -127,6 +127,20 @@ class LoadDispatchableTest(unittest.TestCase):
         self.assertNotIn("drift", slugs)   # md `blocked` wins over stale db `auto`
         self.assertIn("t-auto", slugs)     # normal path unaffected
 
+    def test_md_bare_off_overrides_db_auto(self):
+        # An unquoted `off` loads as YAML boolean False; it used to read as
+        # "absent" here, so the stale db `auto` row dispatched anyway.
+        md = self.tmp / "off.md"
+        md.write_text("---\nstatus: open\nworker_mode: off\n---\n# off\n")
+        con = sqlite3.connect(self.db)
+        con.execute(f"INSERT INTO tasks ({_COLS}) VALUES (?,?,?,?,?,?,?,?,?)",
+                    ("bare-off", "Bare off task", str(md), "", "", "", "auto", "open", 0))
+        con.commit()
+        con.close()
+        slugs = {t.slug for t in tasks.load_dispatchable(self.db)}
+        self.assertNotIn("bare-off", slugs)
+        self.assertIn("t-auto", slugs)
+
     def test_md_auto_agrees_db_auto_dispatched(self):
         # Positive control: md and DB both say `auto` — the guard must not touch
         # the normal path.

@@ -1639,10 +1639,8 @@ class Runner:
                 p = p if p.is_absolute() else vault_root / p
                 if p.is_file():
                     fm = repos._frontmatter(p)
-                    # A bare `worker_mode: off` is YAML 1.1 boolean False, which
-                    # task_worker_mode_from_fm reads as "absent".
-                    if (fm.get("worker_mode") is False
-                            or repos.task_worker_mode_from_fm(fm) == "off"):
+                    # task_worker_mode_from_fm also maps a bare `off` (YAML boolean False).
+                    if repos.task_worker_mode_from_fm(fm) == "off":
                         return "task md worker_mode: off"
                     if _truthy(fm.get("auto_rescoped")) or _truthy(fm.get("is_parent")):
                         return "task md is a rescoped parent (auto_rescoped/is_parent)"

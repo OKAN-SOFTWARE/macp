@@ -62,6 +62,56 @@ class ReadTaskRepoTest(unittest.TestCase):
         self.assertIsNone(repos.read_task_estimate_p90(self._md('---\nestimate_p90: "-"\n---\n')))
 
 
+class ReadTaskWorkerModeTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def _md(self, body: str) -> Path:
+        p = self.tmp / "t.md"
+        p.write_text(body)
+        return p
+
+    def _mode(self, raw: str) -> str | None:
+        return repos.read_task_worker_mode(
+            self._md(f'---\nstatus: open\nworker_mode: {raw}\n---\n# t\n'))
+
+    def test_bare_off_md_reads_off(self):
+        # YAML 1.1 loads an unquoted off as boolean False; it must not fail open.
+        for raw in ("off", "Off", "OFF"):
+            with self.subTest(raw=raw):
+                self.assertEqual(self._mode(raw), "off")
+
+    def test_yaml_false_is_off(self):
+        self.assertEqual(repos.task_worker_mode_from_fm({"worker_mode": False}), "off")
+        for raw in ("no", "false"):
+            with self.subTest(raw=raw):
+                self.assertEqual(self._mode(raw), "off")
+
+    def test_string_modes_unchanged(self):
+        for raw, want in (("auto", "auto"), ("Auto", "auto"),
+                          ('"off"', "off"), ('"OFF"', "off")):
+            with self.subTest(raw=raw):
+                self.assertEqual(self._mode(raw), want)
+
+    def test_absent_blank_placeholder_none(self):
+        self.assertIsNone(repos.read_task_worker_mode(self._md('---\nstatus: open\n---\n# t\n')))
+        self.assertIsNone(self._mode('"-"'))
+        self.assertIsNone(self._mode('""'))
+        self.assertIsNone(repos.read_task_worker_mode(self.tmp / "nope.md"))
+
+    def test_non_false_non_strings_do_not_block(self):
+        # `0 == False` in Python: a numeric 0 must not read as off.
+        for v in (True, 0, 1, 0.0, None, []):
+            with self.subTest(v=v):
+                self.assertIsNone(repos.task_worker_mode_from_fm({"worker_mode": v}))
+        for raw in ("on", "0"):
+            with self.subTest(raw=raw):
+                self.assertIsNone(self._mode(raw))
+
+
 class ResolveTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
