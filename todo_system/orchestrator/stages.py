@@ -109,13 +109,20 @@ def stage_effort(stage: str = "implement", tier: str | None = None) -> str:
 # — the work was cut AND then erased (mulkko-32-dag-migration-v17, 2026-09-13).
 # heavy gets more head-room; standard/light keep the historical 3600.
 #
+# 2026-10-18 (user decision): standard 3600→7200, heavy 5400→10800. Android
+# Verify stages on the 7.7 GB HQ kept dying short of the finish line — not from
+# bad code but from `lintDebug`/`assembleDebug` taking 10–30 min each under
+# memory contention — and every such death cost a whole re-run. The user chose
+# "finish, even if slow" over the tighter bound. light stays at 3600: a one-line
+# change that needs two hours is a mis-tiered task, not a slow build.
+#
 # INVARIANT (pinned by tests, not by an import — worker.py mirrors constants, it
 # does not import this module, and vice-versa): every value here PLUS REAP_MARGIN
 # must stay below worker.RUNNER_HEARTBEAT_STALE_S, or the daemon idle-gate would
 # kickstart a runner that is legitimately mid-stage; and the orchestrator's
 # stale-reaper derives its per-row cutoff from these + REAP_MARGIN for the same
 # reason (orchestrator._stale_bound_for). Keys are model_select.TIERS.
-STAGE_TIMEOUTS = {"heavy": 5400, "standard": 3600, "light": 3600}
+STAGE_TIMEOUTS = {"heavy": 10800, "standard": 7200, "light": 3600}
 DEFAULT_STAGE_TIMEOUT = 3600
 MAX_STAGE_TIMEOUT = max(STAGE_TIMEOUTS.values())
 # Head-room between a run's stage timeout and the moment the reaper may declare
@@ -2635,7 +2642,28 @@ def stage_env_with_gradle(base: dict | None = None, *,
 # so — `gradlew --rerun-tasks` backgrounded, no verify.md — and the retry
 # re-bought research+plan+implement. The prompts forbid backgrounding; this
 # makes it impossible rather than discouraged.
-STAGE_ENV_OVERRIDES = {"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1"}
+#
+# Bash-tool command budget (2026-10-18, user decision "finish, even if slow").
+# Claude Code caps one foreground Bash call at BASH_MAX_TIMEOUT_MS (CLI default
+# 600 000 = 10 min) and uses BASH_DEFAULT_TIMEOUT_MS when the agent passes no
+# `timeout`. With background tasks disabled above, that 10-minute cap was the
+# hard ceiling on any single build: `./gradlew :app:lintDebug` /
+# `assembleDebug` on the memory-starved HQ took longer, the tool killed the
+# gradle CLIENT at 600 s while the daemon kept building under its lock, the next
+# gradlew blocked on that lock ("Gradle wedged"), Verify wrote `skip`, Report
+# opened no PR, and the task parked for a human — 33 runs in the first 17 days of
+# October. One hour per command fits inside the 2 h standard stage above; the
+# 20-minute default covers an agent that forgets the `timeout` parameter
+# without letting a hung command eat the stage. Both are plain env strings
+# (ms), read by the CLI at process start, so the stage subprocess env is the
+# one place to set them.
+BASH_DEFAULT_TIMEOUT_MS = 20 * 60 * 1000
+BASH_MAX_TIMEOUT_MS = 60 * 60 * 1000
+STAGE_ENV_OVERRIDES = {
+    "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
+    "BASH_DEFAULT_TIMEOUT_MS": str(BASH_DEFAULT_TIMEOUT_MS),
+    "BASH_MAX_TIMEOUT_MS": str(BASH_MAX_TIMEOUT_MS),
+}
 
 
 def stage_env(base: dict | None = None, *,

@@ -211,8 +211,9 @@ class StageTimeoutForTest(unittest.TestCase):
     with an explicit `stage_timeout_min` frontmatter override on top."""
 
     def test_each_tier_maps_to_its_timeout(self):
-        self.assertEqual(stages.stage_timeout_for({"model_tier": "heavy"}), 5400)
-        self.assertEqual(stages.stage_timeout_for({"model_tier": "standard"}), 3600)
+        # 2026-10-18 ladder (user decision "finish, even if slow"): 3h / 2h / 1h.
+        self.assertEqual(stages.stage_timeout_for({"model_tier": "heavy"}), 10800)
+        self.assertEqual(stages.stage_timeout_for({"model_tier": "standard"}), 7200)
         self.assertEqual(stages.stage_timeout_for({"model_tier": "light"}), 3600)
 
     def test_untiered_payload_falls_back_to_default_tier(self):
@@ -229,11 +230,11 @@ class StageTimeoutForTest(unittest.TestCase):
         for bad in ("soon", 0, -5, None):
             self.assertEqual(
                 stages.stage_timeout_for({"model_tier": "standard",
-                                          "stage_timeout_min": bad}), 3600)
+                                          "stage_timeout_min": bad}), 7200)
 
     def test_max_stage_timeout_is_the_ceiling_of_the_ladder(self):
         self.assertEqual(stages.MAX_STAGE_TIMEOUT, max(stages.STAGE_TIMEOUTS.values()))
-        self.assertEqual(stages.MAX_STAGE_TIMEOUT, 5400)
+        self.assertEqual(stages.MAX_STAGE_TIMEOUT, 10800)
 
 
 class BuildArgvTest(unittest.TestCase):

@@ -689,18 +689,18 @@ class ReapQueuedExemptionTest(unittest.TestCase):
     def test_queued_task_is_not_reaped(self):
         a = self.orch.dispatch(Task("queued-behind-a-long-run"))
         self.assertIsNotNone(a)
-        # Well past even the DERIVED bound (standard stage 3600 + REAP_MARGIN 900),
+        # Well past even the DERIVED bound (standard stage 7200 + REAP_MARGIN 900),
         # so the only thing sparing this row is the queued exemption, not the clock.
-        later = _parse_ts(a.updated_ts) + 10000
+        later = _parse_ts(a.updated_ts) + 20000
         self.assertEqual(self.orch.reap_stale(now=later), [])
         self.assertFalse(self.ledger.load(a.task_id).is_terminal)
 
     def test_picked_up_then_silent_is_reaped(self):
         a = self.orch.dispatch(Task("taken-then-went-silent"))
         self.mb.ack("w", self.mb.receive("w"))      # runner consumed it, never replied
-        # Past the derived cutoff (max(stale_timeout_s, standard 3600 + 900)); the
+        # Past the derived cutoff (max(stale_timeout_s, standard 7200 + 900)); the
         # flat stale_timeout_s=1.0 is only a floor now.
-        later = _parse_ts(a.updated_ts) + 5000
+        later = _parse_ts(a.updated_ts) + 9000
         reaped = self.orch.reap_stale(now=later)
         self.assertEqual([r.task_id for r in reaped], ["taken-then-went-silent"])
         self.assertEqual(self.ledger.load(a.task_id).state, A.FAILED)

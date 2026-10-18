@@ -159,13 +159,14 @@ RUNNER_HEARTBEAT_PATH = _STATE_DIR / "_state" / "runner_heartbeat"
 # cutoff cannot be "how long a tick takes". It is instead the hard bound between
 # two consecutive touches: the runner re-touches this file per stage, and one
 # stage cannot outlive its subprocess.run timeout. That timeout is no longer a
-# flat 3600 — a heavy task's stage runs up to stages.MAX_STAGE_TIMEOUT (5400s),
-# so the cutoff is 1.5x THAT bound (135min). 1.5x absorbs scheduling slop while
+# flat 3600 — a heavy task's stage runs up to stages.MAX_STAGE_TIMEOUT (10800s
+# since 2026-10-18; 5400 before), so the cutoff is 1.5x THAT bound (270min).
+# 1.5x absorbs scheduling slop while
 # still disarming a corpse — with no cutoff a single crash would freeze the gate
 # at "busy" forever, rebuilding the constant-False defect from another road.
 # INVARIANT (pinned by test, since stages.py is not imported here to avoid a
 # cycle): stages.MAX_STAGE_TIMEOUT + stages.REAP_MARGIN < this value.
-RUNNER_HEARTBEAT_STALE_S = 135 * 60
+RUNNER_HEARTBEAT_STALE_S = 270 * 60
 
 
 def runner_heartbeat_start() -> None:

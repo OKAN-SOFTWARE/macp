@@ -71,6 +71,14 @@ class Profile:
     # Name of the account to prefer (empty = none pinned → lowest priority wins).
     # Written only when set, so a profile that never used it is byte-identical.
     active_account: str = ""
+    # Cross-checkout cap on concurrent runs whose checkout is a Gradle project
+    # (orchestrator.max_parallel_gradle_builds — the memory guard for Android
+    # builds on a small host). 0 = unlimited (dormant). Until 2026-10-18 the
+    # orchestrator read this off the profile with getattr(..., 0) but the field
+    # did not exist here, so `max_parallel_gradle_builds = N` in config.toml was
+    # silently ignored and only the MACP_MAX_PARALLEL_GRADLE_BUILDS env worked.
+    # Appended last: the schema test pins existing field order.
+    max_parallel_gradle_builds: int = 0
 
 
 @dataclass
@@ -116,6 +124,7 @@ def load_profile(name: str) -> Profile | None:
     return Profile(name=name, vault=d.get("vault", ""),
                    daily_run_budget=int(d.get("daily_run_budget", 40)),
                    max_parallel_per_repo=int(d.get("max_parallel_per_repo", 2)),
+                   max_parallel_gradle_builds=int(d.get("max_parallel_gradle_builds", 0)),
                    model=d.get("model", "auto"), accounts=accounts,
                    active_account=str(d.get("active_account", "") or ""))
 
@@ -268,6 +277,9 @@ def write_profile(prof: Profile) -> Path:
              f'daily_run_budget = {prof.daily_run_budget}',
              f'max_parallel_per_repo = {prof.max_parallel_per_repo}',
              f'model = "{prof.model}"']
+    if prof.max_parallel_gradle_builds:
+        # Written only when set, so a profile that never used it is byte-identical.
+        lines.append(f'max_parallel_gradle_builds = {prof.max_parallel_gradle_builds}')
     if prof.active_account:
         lines.append(f'active_account = "{prof.active_account}"')
     for a in prof.accounts:

@@ -555,7 +555,8 @@ def test_profile_schema_roundtrip_and_default_output_unchanged(roots):
     assert [f.name for f in dataclasses.fields(C.Account)] == \
         ["name", "agent", "claude_config_dir", "command", "env", "priority"]
     assert [f.name for f in dataclasses.fields(C.Profile)] == \
-        ["name", "vault", "daily_run_budget", "max_parallel_per_repo", "model", "accounts", "active_account"]
+        ["name", "vault", "daily_run_budget", "max_parallel_per_repo", "model", "accounts",
+         "active_account", "max_parallel_gradle_builds"]
     assert C.Account("pos").claude_config_dir == ACC.LEGACY_CONFIG_DIR
 
     # non-default values round-trip through the documented keys

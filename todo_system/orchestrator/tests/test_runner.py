@@ -2045,7 +2045,7 @@ class StageUsageLoopTest(unittest.TestCase):
                              {"implement": {"unavailable": "timeout"}})
             self.assertTrue(got["out"].payload.get("timed_out"))
             self.assertEqual(got["progress"]["timed_out_stage"], "implement")
-            self.assertIn(f"(timeout after 3600s) ===\n{partial}\n", got["run_log"])
+            self.assertIn(f"(timeout after 7200s) ===\n{partial}\n", got["run_log"])
 
     def test_a_crashed_cli_leaves_unavailable(self):
         legs = _claude_fixture("cli_crash")["legs"]
