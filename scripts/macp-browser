@@ -66,6 +66,15 @@ valid_owner() {
 
 now() { date -u +%s; }
 
+# Nanosecond epoch for the acquire --wait deadline. now() (whole seconds)
+# truncates the fractional second away, so a deadline computed from it can
+# land less than a full second after the real start if the process begins
+# just before a second boundary — the wait loop then exits on its very first
+# check without ever sleeping. now_ns() keeps the fraction so --wait N keeps
+# its "at least N seconds" guarantee regardless of where in the second the
+# acquire call starts.
+now_ns() { date -u +%s%N; }
+
 iso() {
   date -u -d "@$1" +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -r "$1" +%Y-%m-%dT%H:%M:%SZ
 }
@@ -188,7 +197,7 @@ lease() {
       status_json
       exit 0 ;;
     acquire)
-      deadline=$(( $(now) + 10#$WAIT ))
+      deadline=$(( $(now_ns) + 10#$WAIT * 1000000000 ))
       while :; do
         lock
         if ! leased_by_other; then
@@ -207,7 +216,7 @@ lease() {
           exit 0
         fi
         unlock
-        [ "$(now)" -lt "$deadline" ] || refuse
+        [ "$(now_ns)" -lt "$deadline" ] || refuse
         sleep 1
       done ;;
   esac
