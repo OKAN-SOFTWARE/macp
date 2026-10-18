@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# macp-remote-gate — run a heavy / memory-bound verification command on a separate
+# high-spec node and read back ONLY the result (rc · JUnit XML aggregate · log
+# tail · duration), from ANY directory. Worker stages run in other repos'
+# checkouts and their tool whitelist splits on spaces, so a rule like
+# `Bash(python3 -m todo_system...:*)` can never match; this wrapper gives the
+# whitelist one space-free name: `Bash(macp-remote-gate:*)`
+# (todo_system/orchestrator/stages.py REMOTE_GATE_TOOL_RULE).
+#
+#   macp-remote-gate decide --repo <checkout> [--task-id <id>] [--runs-dir <dir>] -- <cmd>
+#       print `remote` or `local` (READ-ONLY): the repo's .macp/gates.json
+#       (remote/heavy) wins, else a prior run's recorded timeout/memory of the
+#       same command, else local; a month over the cost cap forces local.
+#   macp-remote-gate run --slug <s> --repo <url> --sha <sha> [--toolchain <t>] [--timeout <s>] -- <cmd>
+#       start the remote gate DETACHED and print a handle at once — NEVER blocks
+#       the stage. The heavy wall-clock lives on the node, outside the stage cap;
+#       the task defers until the job exits. Do NOT block-poll it inside a stage.
+#   macp-remote-gate poll <handle>     one JSON line: running | done | failed | absent
+#   macp-remote-gate result <handle>   the full result JSON (Worker/jobs/<handle>.json)
+#
+# Install (once per host): copy to a dir on PATH, e.g.
+#   cp scripts/macp-remote-gate ~/.local/bin/macp-remote-gate && chmod +x ~/.local/bin/macp-remote-gate
+# todo_system.orchestrator.remote_gate uses only stdlib at import, so python3 is enough.
+# The node project/zone/machine are read from the vault's .macp/remote_gate.json
+# (never hardcoded here); GCLOUD overrides the gcloud binary.
+MACP_REPO="${MACP_REPO:-$HOME/Projects/MaestroACP}"
+PY="$MACP_REPO/.venv/bin/python"
+[ -x "$PY" ] || PY="$(command -v python3 || command -v python)"
+exec env PYTHONPATH="$MACP_REPO${PYTHONPATH:+:$PYTHONPATH}" "$PY" \
+  -m todo_system.orchestrator.remote_gate "$@"

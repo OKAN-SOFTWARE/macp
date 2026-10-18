@@ -223,23 +223,34 @@ BROWSER_TOOL_STAGES = ("implement", "verify", "quick", "delegate")
 # run are one owner and the stage can `lease acquire` without inventing an id.
 BROWSER_OWNER_ENV = "MACP_BROWSER_OWNER"
 
+# The remote-gate executor (todo_system.orchestrator.remote_gate, CLAUDE delegate
+# note below) for a verification command too heavy/memory-bound for one stage:
+# `macp-remote-gate run -- <cmd>` ships it to a roomier node and the stage reads
+# back only the result. Same space-split problem as SMS/BROWSER, so one PATH
+# wrapper scripts/macp-remote-gate gets one space-free rule. The node
+# project/zone live in the vault's .macp/remote_gate.json, never in engine code.
+REMOTE_GATE_CLI = "macp-remote-gate"
+REMOTE_GATE_TOOL_RULE = f"Bash({REMOTE_GATE_CLI}:*)"
+REMOTE_GATE_TOOL_STAGES = ("implement", "verify", "quick", "delegate")
+
 # Rules every listed stage keeps even when a task supplies its own allowed_tools.
 _STANDING_RULES = ((SMS_TOOL_RULE, SMS_TOOL_STAGES),
-                   (BROWSER_TOOL_RULE, BROWSER_TOOL_STAGES))
+                   (BROWSER_TOOL_RULE, BROWSER_TOOL_STAGES),
+                   (REMOTE_GATE_TOOL_RULE, REMOTE_GATE_TOOL_STAGES))
 
 STAGE_TOOLS = {
     "research": "Read Write",
     "plan": "Read Write",
     "implement": "Read Edit Write Bash(git:*) Bash(uv:*) Bash(npm:*) Bash(pnpm:*) "
                  f"Bash(node:*) Bash(npx:*) Bash(pytest:*) {SMS_TOOL_RULE} "
-                 f"{BROWSER_TOOL_RULE}",
+                 f"{BROWSER_TOOL_RULE} {REMOTE_GATE_TOOL_RULE}",
     "verify": (f"Read Write Bash(git:*) Bash(gh:*) {FALLBACK_RUNNER_TOOLS} {SMS_TOOL_RULE} "
-               f"{BROWSER_TOOL_RULE}"),
+               f"{BROWSER_TOOL_RULE} {REMOTE_GATE_TOOL_RULE}"),
     "report": "Read Write Edit Bash(git:*) Bash(gh:*)",
     "delegate": ("Read Write Edit WebSearch WebFetch Bash(git:*) Bash(pwd:*) Bash(ls:*) "
-                 f"{SMS_TOOL_RULE} {BROWSER_TOOL_RULE}"),
+                 f"{SMS_TOOL_RULE} {BROWSER_TOOL_RULE} {REMOTE_GATE_TOOL_RULE}"),
     "quick": (f"Read Edit Write Bash(git:*) Bash(gh:*) {FALLBACK_RUNNER_TOOLS} {SMS_TOOL_RULE} "
-              f"{BROWSER_TOOL_RULE}"),
+              f"{BROWSER_TOOL_RULE} {REMOTE_GATE_TOOL_RULE}"),
     # No Edit: discover reads a throwaway clone and WRITES exactly two files (the
     # episode report + its artifact). The shell set is what "run the project"
     # needs — the CI runner set plus file inspection and a way to bound a
@@ -407,6 +418,20 @@ def build_stage_argv(stage: str, *, task_id: str, run_id: str, run_dir: Path,
             f"`{BROWSER_CLI} lease release` when done; exit 75 = someone else "
             "holds it — wait (`--wait <sec>`) or stop, never delete lease.json. "
             "Touch only tabs you opened.\n")
+    if stage in REMOTE_GATE_TOOL_STAGES:
+        # A gate command too heavy for one stage (overruns the cap, or won't finish
+        # inside the runner cgroup's memory — e.g. a full Robolectric/Gradle suite)
+        # goes to a roomier node via the metadata, same as the BROWSER line, since
+        # the worker-*.md prompts under .claude/** are unwriteable by a headless stage.
+        meta.append(
+            f"- **Heavy / over-memory verification ({REMOTE_GATE_CLI})**: do NOT "
+            "block-poll a command that would overrun this stage's cap or the host's "
+            f"memory. Ask `{REMOTE_GATE_CLI} decide --repo <checkout> --task-id "
+            f"{task_id} -- <cmd>`; if it prints `remote`, run `{REMOTE_GATE_CLI} "
+            "run --repo <url> --sha <sha> -- <cmd>` (starts DETACHED, prints a "
+            f"handle at once) and read the result back with `{REMOTE_GATE_CLI} poll "
+            f"<handle>` / `{REMOTE_GATE_CLI} result <handle>` — the heavy wall-clock "
+            "runs on the node, outside this stage's timeout window.\n")
     if repo:
         meta.append(f"- repo: `{repo}`\n")
         if working_dir:
