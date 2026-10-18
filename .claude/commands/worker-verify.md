@@ -21,10 +21,18 @@ not.
 
 The runner starts this stage with background tasks switched off
 (`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`), so `run_in_background` just runs in the
-foreground. A slow build needs the Bash `timeout` parameter (up to `600000` ms),
-and a scoped `--rerun` on the one task you need re-executed, not `--rerun-tasks`,
+foreground. A slow build needs the Bash `timeout` parameter — the runner raises
+the cap to `3600000` ms (60 min; a call with no `timeout` gets 20 min), and the
+stage itself has 2 h (3 h for heavy-tier tasks). Gradle on this host can take
+10–30 min per task under memory contention, so pass `timeout: 3600000` to every
+`./gradlew` call and let it finish; do not split the suite, drop lanes, or stop
+early to fit a smaller budget (user decision 2026-10-18: finish, even if slow).
+Use a scoped `--rerun` on the one task you need re-executed, not `--rerun-tasks`,
 which rebuilds the whole graph from scratch (a past run ended its turn waiting on
-exactly that). If a check still cannot finish inside that cap, write
+exactly that). If a Gradle command does time out, its daemon may still hold the
+build lock: run `./gradlew --stop` (it only reaches this run's own daemon
+registry), retry the command once with the full budget, and record both attempts.
+Only if a check still cannot finish inside the 60-minute cap, write
 `overall_status: skip` naming it.
 
 ## Policy: local verification — GitHub Actions is not used

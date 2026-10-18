@@ -12,8 +12,9 @@ it up. A run that backgrounded a 75-minute data collection ("I'll pick up when
 the collection exits") lost it at 15/100 tickers the instant this stage exited —
 and the checks stayed green, because the missing data was gitignored.
 
-- Work you need the output of runs in the foreground. The stage cap is 60
-  minutes (90 for heavy-tier tasks); anything that fits, just run and wait for.
+- Work you need the output of runs in the foreground. The stage cap is 120
+  minutes (180 for heavy-tier tasks, 60 for light); anything that fits, just run
+  and wait for.
 - Work that does **not** fit belongs to the task's `long_job:` frontmatter field,
   not to you. The runner starts it detached, defers the task until it exits, and
   re-runs this pipeline once the data is complete. If you discover mid-run that
@@ -23,7 +24,12 @@ and the checks stayed green, because the missing data was gitignored.
 - Never end your turn describing work that is still running.
 - The runner enforces this: stages run with `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS=1`,
   so `run_in_background` executes in the foreground. Give slow commands the Bash
-  `timeout` parameter (up to `600000` ms) instead.
+  `timeout` parameter instead — the runner raises the cap to `3600000` ms (60 min;
+  a call with no `timeout` gets 20 min). Pass `timeout: 3600000` to every
+  `./gradlew` call: builds on this host can take 10–30 min under memory
+  contention, and the user chose "finish, even if slow" (2026-10-18) over
+  splitting or skipping. If a Gradle command times out anyway, run
+  `./gradlew --stop` (this run's own daemon registry only) before retrying once.
 
 ## When the task is too big for one stage — leave a machine-readable split plan (`rescope.json`)
 
