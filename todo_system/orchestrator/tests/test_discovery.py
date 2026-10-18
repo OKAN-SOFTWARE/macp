@@ -341,5 +341,100 @@ class CliTest(DiscoveryBase):
         self.assertIn("usage", err.getvalue())
 
 
+class ConsumedTest(DiscoveryBase):
+    """Every task already created from a report — open AND done, resolved report
+    or not — so the planner stops re-creating a finished candidate under a new
+    slug (10-18: a done task's candidate came back as a fresh task)."""
+
+    STEM = "2026-09-10-1200-discovery-dripcoffee"
+
+    def test_tasks_by_discovery_lists_every_task_with_status_and_title(self):
+        _task(self.items, "b-fix", repo=URL_A, extra=f"from_discovery: {self.STEM}")
+        _task(self.items, "a-fix", status="done", repo=URL_A,
+              extra=f'from_discovery: "{self.STEM}"')
+        _task(self.items, "other", extra="from_discovery: 2026-09-01-1200-discovery-x")
+        _task(self.items, "nulled", extra="from_discovery: null")
+        _task(self.items, "plain")
+        got = discovery.tasks_by_discovery()
+        self.assertEqual(set(got), {self.STEM, "2026-09-01-1200-discovery-x"})
+        self.assertEqual(got[self.STEM], [
+            {"slug": "a-fix", "status": "done", "title": "a-fix"},
+            {"slug": "b-fix", "status": "open", "title": "b-fix"},
+        ])
+
+    def test_reconcile_still_names_the_first_slug(self):
+        _task(self.items, "b-fix", repo=URL_A, extra=f"from_discovery: {self.STEM}")
+        _task(self.items, "a-fix", status="done", repo=URL_A,
+              extra=f"from_discovery: {self.STEM}")
+        _report(self.episodes, self.STEM, URL_A, ["c"])
+        self.assertEqual(discovery.reconcile(), {self.STEM: "created: a-fix"})
+        rec = json.loads(self.state.read_text(encoding="utf-8"))["reports"][self.STEM]
+        self.assertEqual(set(rec), {"injections", "resolved"})
+
+    def test_consumed_is_empty_without_reports_or_tasks(self):
+        self.assertEqual(discovery.render_consumed([], now=NOW), "")
+        _report(self.episodes, self.STEM, URL_A, ["c"])
+        _task(self.items, "unrelated", repo=URL_A)
+        self.assertEqual(discovery.render_consumed(discovery.reports(), now=NOW), "")
+
+    def test_report_with_only_done_tasks_is_listed(self):
+        stem = "2026-09-08-1200-discovery-dripcoffee"
+        _report(self.episodes, stem, URL_A, ["**X** — 근거: x"])
+        _task(self.items, "x-fix", status="done", repo=URL_A, extra=f"from_discovery: {stem}")
+        discovery.reconcile()
+        self.assertEqual(discovery.open_reports(discovery._load_state()), [],
+                         "the report is resolved, so the unconsumed block no longer shows it")
+        ctx = discovery.render_consumed(discovery.reports(), now=NOW)
+        self.assertIn(f"[{stem}] repo={URL_A} · 생성 1개", ctx)
+        self.assertIn("  - x-fix (done) x-fix", ctx)
+        self.assertIn("open 이든 done 이든", ctx)
+        self.assertIn("from_discovery", ctx)
+        self.assertIn("제목", ctx)
+        self.assertIn("근거", ctx)
+
+    def test_every_slug_per_report_is_listed(self):
+        _report(self.episodes, self.STEM, URL_A, ["a", "b", "c"])
+        for slug, status in (("t-one", "open"), ("t-two", "done"), ("t-three", "done")):
+            _task(self.items, slug, status=status, repo=URL_A,
+                  extra=f"from_discovery: {self.STEM}")
+        ctx = discovery.render_consumed(discovery.reports(), now=NOW)
+        self.assertIn("생성 3개", ctx)
+        for line in ("  - t-one (open) t-one", "  - t-two (done) t-two",
+                     "  - t-three (done) t-three"):
+            self.assertIn(line, ctx)
+
+    def test_reports_outside_window_are_excluded(self):
+        stems = {
+            "old": "2026-08-20-1200-discovery-dripcoffee",   # 21 days before NOW
+            "edge": "2026-08-27-1200-discovery-dripcoffee",  # exactly 14 days
+            "gen": "r9-discovery-a",                         # dated by generated:
+            "undated": "r8-discovery-a",                     # no date at all
+        }
+        for key, stem in stems.items():
+            _report(self.episodes, stem, URL_A, ["c"])
+            _task(self.items, f"{key}-fix", repo=URL_A, extra=f"from_discovery: {stem}")
+        gen = self.episodes / f"{stems['gen']}.md"
+        gen.write_text(gen.read_text(encoding="utf-8").replace(
+            "head: abc", "head: abc\ngenerated: 2026-09-09T10:00:00+09:00"), encoding="utf-8")
+        ctx = discovery.render_consumed(discovery.reports(), now=NOW)
+        self.assertNotIn(stems["old"], ctx)
+        self.assertIn(f"[{stems['edge']}]", ctx)
+        self.assertIn(f"[{stems['gen']}]", ctx)
+        self.assertNotIn(stems["undated"], ctx)
+        self.assertIn(f"최근 {discovery.CONSUMED_WINDOW_DAYS}일", ctx)
+
+    def test_emit_consumed_cli(self):
+        import io
+        from contextlib import redirect_stdout, redirect_stderr
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            self.assertEqual(discovery.main(["emit-consumed"]), 0)
+        self.assertEqual(buf.getvalue(), "")
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self.assertEqual(discovery.main(["bogus"]), 2)
+        self.assertIn("emit-consumed", err.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

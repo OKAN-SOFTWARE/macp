@@ -253,6 +253,15 @@ if [ -n "$DCTX" ]; then
   echo "[planner-tick] injecting $(printf '%s' "$DCTX" | grep -c '^- \[') unconsumed discovery report(s) into planner context"
   PROMPT="$PROMPT"$'\n\n'"$DCTX"
 fi
+# Tasks already created from each recent discovery report (open AND done,
+# resolved or not): the planner's dedup otherwise only sees open tasks, so a
+# candidate finished last week was re-created under a new slug (10-18). Always
+# injected, not just in 탐색 모드; empty when no recent report produced tasks.
+CCTX=$($PY -m todo_system.orchestrator.discovery emit-consumed 2>/dev/null)
+if [ -n "$CCTX" ]; then
+  echo "[planner-tick] injecting $(printf '%s' "$CCTX" | grep -c '^- \[') discovery report(s) with already-created tasks into planner context"
+  PROMPT="$PROMPT"$'\n\n'"$CCTX"
+fi
 # 탐색 모드 (aggressive only): tell the planner to scan past its own trigger
 # skip, raise its per-call cap to AGG_MAX_NEW (already clamped to the room under
 # DEPTH_LIMIT), and keep every blocked pattern. Normal mode never reaches this.

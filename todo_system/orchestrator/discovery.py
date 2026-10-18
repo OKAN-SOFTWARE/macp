@@ -71,6 +71,9 @@ ACTIVE_STATUSES = frozenset({"open", "waiting", "blocked"})
 REPO_FIELD = "discover_repo"
 REPORT_GLOB = "*-discovery-*.md"
 CANDIDATE_SECTION = "후보 태스크"
+# Resolved reports still show the planner what they already produced (open and
+# done) for this many days, so a finished candidate is not re-created.
+CONSUMED_WINDOW_DAYS = 14
 
 
 # ---------------------------------------------------------------- state ---
@@ -416,10 +419,13 @@ def render_context(paths: list[Path]) -> str:
 _FROM_DISCOVERY_RE = re.compile(r"^from_discovery:[ \t]*(.+)$", re.M)
 
 
-def _tasks_from_discovery(items_dir: Path) -> dict[str, str]:
-    out: dict[str, str] = {}
+def tasks_by_discovery(items_dir: Path | None = None) -> dict[str, list[dict[str, str]]]:
+    """{report stem: [{"slug", "status", "title"}, ...]} for EVERY task stamped
+    `from_discovery: <stem>` — open and done alike, in sorted path order. The
+    title is the first `# ` line of the body, the slug when there is none."""
+    out: dict[str, list[dict[str, str]]] = {}
     try:
-        paths = sorted(Path(items_dir).glob("*.md"))
+        paths = sorted(Path(items_dir if items_dir else ITEMS_DIR).glob("*.md"))
     except OSError:
         return out
     for p in paths:
@@ -427,14 +433,86 @@ def _tasks_from_discovery(items_dir: Path) -> dict[str, str]:
             text = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        fm = text[:text.find("\n---", 3)] if text.startswith("---") else ""
+        end = text.find("\n---", 3) if text.startswith("---") else -1
+        fm = text[:end] if text.startswith("---") else ""
         m = _FROM_DISCOVERY_RE.search(fm)
         if not m:
             continue
         stem = m.group(1).strip().strip("\"'")
-        if stem and stem.lower() not in ("null", "none", "-"):
-            out.setdefault(stem, p.stem)
+        if not stem or stem.lower() in ("null", "none", "-"):
+            continue
+        body = text[end + 4:] if end >= 0 else text
+        t = re.search(r"^#[ \t]+(.+?)[ \t]*$", body, re.M)
+        out.setdefault(stem, []).append({
+            "slug": p.stem,
+            "status": _fm_field(text, "status") or "?",
+            "title": t.group(1) if t else p.stem,
+        })
     return out
+
+
+def _tasks_from_discovery(items_dir: Path) -> dict[str, str]:
+    """{report stem: first created slug} — the shape reconcile records."""
+    return {stem: ts[0]["slug"] for stem, ts in tasks_by_discovery(items_dir).items()}
+
+
+def _report_date(p: Path) -> dt.date | None:
+    """The report's date: the stem's `YYYY-MM-DD` prefix, else frontmatter
+    `generated:`, else None (the caller treats None as outside the window)."""
+    m = re.match(r"(\d{4}-\d{2}-\d{2})", p.stem)
+    if m:
+        try:
+            return dt.date.fromisoformat(m.group(1))
+        except ValueError:
+            pass
+    try:
+        gen = _fm_field(p.read_text(encoding="utf-8", errors="replace"), "generated")
+        return dt.datetime.fromisoformat(gen).date() if gen else None
+    except (OSError, ValueError):
+        return None
+
+
+def render_consumed(paths: list[Path], items_dir: Path | None = None, *,
+                    now: float | None = None,
+                    window_days: int = CONSUMED_WINDOW_DAYS) -> str:
+    """Planner-context block: for each report of the last `window_days` days,
+    every task already created from it (open and done, resolved or not). ""
+    when no recent report produced a task — empty in, empty out, like
+    render_context."""
+    today = dt.date.fromtimestamp(now) if now is not None else dt.date.today()
+    cutoff = today - dt.timedelta(days=window_days)
+    created = tasks_by_discovery(items_dir)
+    entries = []
+    for p in paths:
+        if not created.get(p.stem):
+            continue
+        d = _report_date(p)
+        if d is not None and d >= cutoff:
+            entries.append(p)
+    if not entries:
+        return ""
+    lines = [
+        f"## discovery 리포트별 이미 생성된 태스크 (최근 {window_days}일, open·done 전부)",
+        "",
+        "아래는 최근 discovery 리포트마다 그 리포트에서 이미 만들어진 태스크(frontmatter",
+        "`from_discovery: <리포트 stem>`)를 resolved 여부와 무관하게 전부 나열한 것이다.",
+        "**같은 리포트의 같은 후보가 이미 이 목록에 있으면 — open 이든 done 이든 — 다시",
+        "만들지 마라.** 리포트의 후보 번호는 생성 태스크의 제목과 그 태스크 파일의 근거",
+        "(outcome·Spec)를 Read 해 대조한다. slug 가 다르다고 새 후보가 아니다. 이미 done 인",
+        "후보를 다시 만들면 워커가 0커밋 pass 로 끝나 사람이 중복으로 닫아야 한다.",
+        "",
+    ]
+    for p in entries:
+        try:
+            repo = _fm_field(p.read_text(encoding="utf-8", errors="replace"), "repo") or "?"
+        except OSError:
+            repo = "?"
+        ts = created[p.stem]
+        lines.append(f"- [{p.stem}] repo={repo} · 생성 {len(ts)}개 · "
+                     f"`{p.as_posix() if not p.is_absolute() else 'Memory/episodes/' + p.name}`")
+        for t in ts:
+            lines.append(f"  - {t['slug']} ({t['status']}) {t['title']}")
+    return "\n".join(lines)
 
 
 def _rejections(path: Path | None = None) -> dict[str, str]:
@@ -498,7 +576,8 @@ def main(argv: list[str] | None = None) -> int:
     maybe-create [--force]  one discovery task when the planner is exhausted
                             (prints `created <slug>` or `skip: <reason>`)
     emit-context            unconsumed reports as a planner-context block
-    reconcile               close handled reports / count injections
+    emit-consumed           per-report tasks already created (open+done), last 14 days
+    reconcile              close handled reports / count injections
     status                  what would happen, for a human
     """
     args = list(sys.argv[1:] if argv is None else argv)
@@ -509,6 +588,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if cmd == "emit-context":
         sys.stdout.write(render_context(open_reports(_load_state())))
+        return 0
+    if cmd == "emit-consumed":
+        sys.stdout.write(render_consumed(reports()))
         return 0
     if cmd == "reconcile":
         done = reconcile()
@@ -529,7 +611,7 @@ def main(argv: list[str] | None = None) -> int:
               f"open reports: {len(open_reports(state))} · enabled={enabled()}")
         return 0
     sys.stderr.write("usage: python -m todo_system.orchestrator.discovery "
-                     "{maybe-create [--force]|emit-context|reconcile|status}\n")
+                     "{maybe-create [--force]|emit-context|emit-consumed|reconcile|status}\n")
     return 2
 
 
