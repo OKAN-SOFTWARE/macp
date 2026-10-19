@@ -29,11 +29,17 @@ This script runs from <label_prefix>claude-auth-watch and fails loudly instead:
                          spawned by remote-control keep their Chrome tools;
                          extension pairing state is reported as a note
   5. housekeeping      - truncate the remote-control log if it runs away
+  6. plan vs login     - oauthAccount.subscriptionCreatedAt newer than the
+                         login (Keychain item creation) → the token's Remote
+                         Control entitlement is stale; re-login before the
+                         daemon's next restart exposes it (2026-10-17)
 
 It never prints or stores token material: only lengths, expiry dates and counts.
 Remedy when it fires: run `claude` in a terminal, `/login`, then
 `launchctl kickstart -k gui/$UID/<label_prefix>claude-remote-control`
 (``<label_prefix>`` = ``paths.label_prefix()``, the vault's ``.macp/config.toml`` key).
+For a Remote Control entitlement failure (RC_RELOGIN_HINT) it is the full
+`claude auth logout && claude auth login` — a refresh does not renew entitlements.
 """
 
 from __future__ import annotations
@@ -409,13 +415,19 @@ def credential_written_at(config_dir) -> float | None:
             return _credentials_file(config_dir).stat().st_mtime
         except OSError:
             return None
+    return _keychain_stamp("mdat")
+
+
+def _keychain_stamp(attr: str) -> float | None:
+    """Epoch seconds of the Keychain item's ``mdat`` (last write) or ``cdat``
+    (creation) attribute, from ``security find-generic-password`` metadata."""
     proc = subprocess.run(
         ["security", "find-generic-password", "-s", KEYCHAIN_SERVICE],
         capture_output=True,
         text=True,
     )
     for line in proc.stdout.splitlines():
-        if '"mdat"' not in line:
+        if f'"{attr}"' not in line:
             continue
         # Line looks like: "mdat"<timedate>=0x3230...5A00  "20260816100005Z\000"
         match = re.search(r'"(\d{14}Z)', line)
@@ -424,6 +436,69 @@ def credential_written_at(config_dir) -> float | None:
         parsed = dt.datetime.strptime(match.group(1), "%Y%m%d%H%M%SZ")
         return parsed.replace(tzinfo=dt.timezone.utc).timestamp()
     return None
+
+
+def credential_created_at(config_dir) -> float | None:
+    """Epoch seconds of the LOGIN, as opposed to the last refresh.
+
+    Mac only: ``claude auth login`` deletes and re-creates the Keychain item, so
+    its ``cdat`` is the login time (verified 2026-10-19: cdat 2026-05-18 →
+    2026-10-19T00:46Z across a logout/login, while mdat moves on every refresh).
+    Linux rewrites ``.credentials.json`` on refresh too, so there is no login
+    stamp to read there — None, and the plan-vs-login check is skipped.
+    """
+    if not IS_DARWIN:
+        return None
+    return _keychain_stamp("cdat")
+
+
+def _plan_newer_than_login(subscription_created_at: str | None,
+                           credential_created_at_s: float | None) -> bool:
+    """True when the account's plan was (re)created AFTER the current login.
+
+    Pure, so it is unit-testable. ``subscription_created_at`` is the ISO stamp
+    the CLI caches in ``.claude.json`` → ``oauthAccount.subscriptionCreatedAt``
+    (profile refetches keep it current even while the token stays old).
+    """
+    if not subscription_created_at or credential_created_at_s is None:
+        return False
+    created = parse_timestamp(subscription_created_at)
+    if created is None:
+        return False
+    return created > credential_created_at_s
+
+
+def check_plan_change(name, config_dir, problems: list[str], notes: list[str]) -> None:
+    """Catch a login whose Remote Control entitlement the server no longer honours.
+
+    2026-10-16 03:46Z the plan was re-created (oauthAccount.subscriptionCreatedAt);
+    the 2026-05-18 login kept refreshing fine, every check here stayed OK, and the
+    running daemon — registered on 10/15 — kept serving. The 10/17 16:40 upgrade
+    restart then failed with "Remote Control isn't enabled for this account" /
+    bridge 404 for two days. Token refreshes do NOT pick up entitlements; only a
+    new login does, so warn as soon as the plan stamp passes the login stamp,
+    while the daemon is still up and the fix is a calm one.
+    """
+    label = _acct_label(name)
+    login_at = credential_created_at(config_dir)
+    if login_at is None:
+        notes.append(label + "plan-vs-login check n/a (no login timestamp on this platform)")
+        return
+    try:
+        cfg = json.loads(_acc().claude_json_path(config_dir).read_text())
+    except (OSError, json.JSONDecodeError):
+        notes.append(label + "plan-vs-login check skipped (.claude.json unreadable)")
+        return
+    plan_at = (cfg.get("oauthAccount") or {}).get("subscriptionCreatedAt")
+    if _plan_newer_than_login(plan_at, login_at):
+        login_day = dt.datetime.fromtimestamp(login_at, dt.timezone.utc).strftime("%Y-%m-%d")
+        problems.append(
+            label + f"plan (re)created {plan_at[:10]} after the current login ({login_day}) — "
+            f"remote-control will be refused as 'not enabled for this account' at its next "
+            f"restart; {RC_RELOGIN_HINT}"
+        )
+        return
+    notes.append(label + "login newer than plan")
 
 
 def check_transcripts(watched, problems: list[str], notes: list[str]) -> None:
@@ -585,6 +660,32 @@ def is_descendant_of(pid: int) -> bool:
     return False
 
 
+RC_RELOGIN_HINT = "해결: claude auth logout && claude auth login (브라우저 승인 필요)"
+
+# Exit text after which no restart helps — the account/entitlement/credential
+# class. Mirrors PERMANENT_PATTERNS in claude_remote_control.sh (keep in step);
+# every entry is a CLI 2.1.302 eligibility / registration message. Deliberately
+# absent: "Couldn't verify Remote Control eligibility — the feature-flag service
+# was unreachable" (network, transient — the 30 s KeepAlive loop is right there).
+PERMANENT_RC_ERROR_MARKERS = (
+    "Remote Control isn't enabled for this account",
+    "environments are not available for your account",
+    "requires a full-scope login token",
+    "requires a claude.ai subscription",
+    "requires claude.ai subscription auth",
+    "Unable to determine your organization",
+    "disabled by your organization's policy",
+    "only available when using Claude via api.anthropic.com",
+)
+
+
+def is_permanent_rc_error(line: str | None) -> bool:
+    """Does this remote-control stderr line mean 'relogin/entitlement, not retry'?"""
+    if not line:
+        return False
+    return any(marker in line for marker in PERMANENT_RC_ERROR_MARKERS)
+
+
 def last_startup_error(max_bytes: int = 8192, max_len: int = 240) -> str | None:
     """remote-control stderr 로그 끝에서 가장 최근 에러 한 줄.
 
@@ -601,7 +702,9 @@ def last_startup_error(max_bytes: int = 8192, max_len: int = 240) -> str | None:
         return None
     for line in reversed(tail.splitlines()):
         line = line.strip()
-        if line.startswith("Error") or "Error:" in line:
+        # The bridge-registration 404 ("Remote Control environments are not
+        # available for your account.") carries no "Error" prefix (2026-10-17).
+        if line.startswith("Error") or "Error:" in line or is_permanent_rc_error(line):
             return line[:max_len]
     return None
 
@@ -629,6 +732,11 @@ def check_remote_control_binary(problems: list[str], notes: list[str]) -> None:
         # "is not running"만으로는 원인을 찾으러 로그를 다시 뒤져야 했다.
         why = last_startup_error()
         detail = f" — 마지막 stderr: {why}" if why else ""
+        if is_permanent_rc_error(why):
+            # 2026-10-17: "isn't enabled for this account" sat in this PROBLEM
+            # line for two days; the reader needs the remedy, not just the cause.
+            # The wrapper is backing off (5 min → 1 h) rather than looping.
+            detail += f" — 재시작으로는 안 살아남, {RC_RELOGIN_HINT}"
         problems.append(
             f"{RC_LABEL} is not running — remote control unreachable{detail} "
             f"({daemonctl.status_hint(RC_LABEL)})"
@@ -690,6 +798,7 @@ def check_accounts(watched, problems: list[str], notes: list[str]) -> None:
     touched here; main() does those once per run."""
     for name, config_dir in watched:
         check_credential(name, config_dir, problems, notes)
+        check_plan_change(name, config_dir, problems, notes)
         check_chrome(name, config_dir, problems, notes)
 
 

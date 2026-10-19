@@ -21,6 +21,7 @@ scripts/claude_upgrade.py                                # CLI 자동 업그레�
 scripts/install_remote_control_launchagent.sh            # 원격조종 LaunchAgent 설치기: 개인 라벨 4종
 scripts/remote-control-windows/wsl-claude-prompt.md      # Windows/WSL 원격조종 설치 프롬프트: 윈도 사용자 경로 예시
 todo_system/tests/test_claude_remote_control_watchdog.py # 워치독 테스트: 실제 캡처한 개인 상태줄 픽스처
+todo_system/tests/test_claude_remote_control_wrapper.py  # 래퍼 백오프 테스트: 짝 scripts/claude_remote_control.sh 가 목록에 있음 (2026-10-19)
 todo_system/tests/test_claude_upgrade.py                 # CLI 업그레이더 테스트: 짝 scripts/claude_upgrade.py 가 이미 목록에 있고 원격조종 스택과 함께 7단계 볼트 이동 (선례: test_claude_remote_control_watchdog.py). 공개 분리 10: export 트리에서 수집 에러 제거
 
 # --- 원격조종 스택 Windows 3종 (§5.4, 히트 없음) — 스택 단위로 함께 이동 ---
