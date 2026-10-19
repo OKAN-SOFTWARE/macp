@@ -1311,13 +1311,30 @@ FAVICON_HREF = "data:image/svg+xml;base64," + base64.b64encode(LOGO_SVG.encode("
 HTML = """<!doctype html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>MaestroACP · live</title>
+<meta name="color-scheme" content="dark light">
 <link rel="icon" type="image/svg+xml" href="__FAVICON__">
+<script>/* pre-paint: apply saved theme to <html data-theme> before first paint so an
+   explicit light choice never flashes the dark default. auto/unknown = no attr
+   (falls back to :root dark + prefers-color-scheme light). No external ref. */
+try{var _t=localStorage.getItem('mdash.theme');if(_t==='light'||_t==='dark')document.documentElement.dataset.theme=_t}catch(_e){}</script>
 <style>
 /* Mobile-first single column. Dark theme; body text (--fg 16:1, --mut ~7.6:1 on
    --bg) meets WCAG AA 4.5:1, base font 14px. No external URL / font / script. */
 :root{--bg:#0d1117;--card:#161b22;--bd:#30363d;--bd2:#242b34;
 --fg:#e6edf3;--mut:#9ba5b0;
 --grn:#3fb950;--red:#f85149;--yel:#d29922;--blu:#58a6ff;--pur:#bc8cff}
+/* Light palette (docs/dashboard-parity.md §2, 11 tokens). Applied for OS light
+   under auto (no explicit data-theme), and for an explicit data-theme="light".
+   A media query and an attribute selector can't share one declaration block, so
+   the same token list is written twice — keep both in sync if the contract moves. */
+@media (prefers-color-scheme:light){:root:not([data-theme="dark"]){
+--bg:#f6f8fa;--card:#ffffff;--bd:#d0d7de;--bd2:#eaeef2;
+--fg:#1f2328;--mut:#59636e;
+--grn:#1a7f37;--red:#cf222e;--yel:#9a6700;--blu:#0969da;--pur:#8250df}}
+:root[data-theme="light"]{
+--bg:#f6f8fa;--card:#ffffff;--bd:#d0d7de;--bd2:#eaeef2;
+--fg:#1f2328;--mut:#59636e;
+--grn:#1a7f37;--red:#cf222e;--yel:#9a6700;--blu:#0969da;--pur:#8250df}
 *{box-sizing:border-box}
 html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
 body{margin:0;background:var(--bg);color:var(--fg);
@@ -1330,13 +1347,15 @@ overflow:hidden;text-overflow:ellipsis}
 .dot{width:11px;height:11px;border-radius:50%;flex:none;background:var(--mut)}
 .pill{padding:3px 11px;border-radius:20px;font-size:13px;font-weight:600;
 border:1px solid var(--bd);white-space:nowrap}
+#theme{background:transparent;color:var(--fg);font:inherit;cursor:pointer}
+#theme:hover{border-color:var(--blu)}
 .live{animation:pulse 1.5s infinite}@keyframes pulse{50%{opacity:.3}}
 .wrap{max-width:900px;margin:0 auto;padding:14px 16px 28px;
 display:flex;flex-direction:column;gap:12px}
 .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:13px 15px}
 .card h2{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--mut);
 margin:0 0 9px;font-weight:600;display:flex;align-items:center;gap:8px}
-.cnt{background:#21262d;color:var(--fg);border-radius:20px;padding:1px 9px;
+.cnt{background:color-mix(in srgb,var(--card),var(--bd));color:var(--fg);border-radius:20px;padding:1px 9px;
 font-size:12px;font-weight:600}
 .state{font-size:20px;font-weight:700;display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
 .state .sub{font-size:13px;font-weight:500;color:var(--mut)}
@@ -1360,27 +1379,35 @@ flex:0 1 auto;min-width:0;flex-wrap:wrap}
 .age{color:var(--mut);font-size:12px;white-space:nowrap}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .badge{padding:2px 8px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap}
-.b-done{background:#12321f;color:#56d364}.b-fail{background:#3d1a1a;color:#ff9a92}
-.b-run{background:#122b40;color:#79c0ff}.b-wait{background:#3a2d10;color:#e3b341}
-.b-gray{background:#262c34;color:var(--mut)}.b-def{background:#1f2a36;color:#a5b4c7}
-.b-pur{background:#2a2140;color:#d2b4ff}.b-blu{background:#132a3d;color:#79c0ff}
+/* Badges: tint = semantic token at 15% over --card, text = the token darkened 25%
+   toward --fg. Both derive only from the 11 tokens (no hardcoded badge hex, parity
+   §2); the --fg nudge lifts the token's own ~4.9:1-on-white to ≥5.4:1 on the tint
+   in both themes (yellow alone can't clear 4.5:1 undarkened — see run contrast table). */
+.b-done{background:color-mix(in srgb,var(--grn) 15%,var(--card));color:color-mix(in srgb,var(--grn) 75%,var(--fg))}
+.b-fail{background:color-mix(in srgb,var(--red) 15%,var(--card));color:color-mix(in srgb,var(--red) 75%,var(--fg))}
+.b-run{background:color-mix(in srgb,var(--blu) 15%,var(--card));color:color-mix(in srgb,var(--blu) 75%,var(--fg))}
+.b-wait{background:color-mix(in srgb,var(--yel) 15%,var(--card));color:color-mix(in srgb,var(--yel) 75%,var(--fg))}
+.b-gray{background:color-mix(in srgb,var(--mut) 15%,var(--card));color:color-mix(in srgb,var(--mut) 75%,var(--fg))}
+.b-def{background:color-mix(in srgb,var(--mut) 15%,var(--card));color:color-mix(in srgb,var(--mut) 75%,var(--fg))}
+.b-pur{background:color-mix(in srgb,var(--pur) 15%,var(--card));color:color-mix(in srgb,var(--pur) 75%,var(--fg))}
+.b-blu{background:color-mix(in srgb,var(--blu) 15%,var(--card));color:color-mix(in srgb,var(--blu) 75%,var(--fg))}
 .pchip{display:inline-block;border-radius:6px;padding:1px 7px;font-size:12px;
 font-weight:600;margin-right:5px;border:1px solid var(--bd)}
-.cp{background:#21262d;border:1px solid var(--bd);color:var(--mut);border-radius:6px;
+.cp{background:color-mix(in srgb,var(--card),var(--bd));border:1px solid var(--bd);color:var(--mut);border-radius:6px;
 cursor:pointer;font-size:12px;line-height:1;padding:2px 6px;margin-left:5px;white-space:nowrap}
 .cp:hover{color:var(--fg);border-color:var(--blu)}.cp.ok{color:var(--grn);border-color:var(--grn)}
 .stg{display:inline-block;min-width:16px;height:16px;border-radius:4px;font-size:10px;
 text-align:center;line-height:16px;font-weight:700;margin-right:2px}
-.s-ok{background:#12321f;color:#56d364}.s-bad{background:#3d1a1a;color:#ff9a92}
+.s-ok{background:color-mix(in srgb,var(--grn) 15%,var(--card));color:color-mix(in srgb,var(--grn) 75%,var(--fg))}.s-bad{background:color-mix(in srgb,var(--red) 15%,var(--card));color:color-mix(in srgb,var(--red) 75%,var(--fg))}
 .chips{display:flex;flex-wrap:wrap;gap:6px}
-.chips span{background:#21262d;border-radius:6px;padding:3px 9px;font-size:13px;color:var(--fg)}
+.chips span{background:color-mix(in srgb,var(--card),var(--bd));border-radius:6px;padding:3px 9px;font-size:13px;color:var(--fg)}
 details>summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--fg);
 list-style:none;display:flex;align-items:center;gap:8px;padding:2px 0}
 details>summary::-webkit-details-marker{display:none}
 details>summary::before{content:'▸';color:var(--mut);font-size:11px;flex:none}
 details[open]>summary::before{content:'▾'}
 details>summary .cnt{margin-left:auto}
-.pbar{display:inline-block;width:56px;height:6px;border-radius:3px;background:#21262d;
+.pbar{display:inline-block;width:56px;height:6px;border-radius:3px;background:color-mix(in srgb,var(--card),var(--bd));
 overflow:hidden;vertical-align:middle}.pbar i{display:block;height:100%;background:var(--grn)}
 /* project rows are one line: chip + title clipped with ellipsis (info diet). */
 .prj .main>div{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -1389,7 +1416,7 @@ overflow:hidden;vertical-align:middle}.pbar i{display:block;height:100%;backgrou
 .grphead{font-weight:600}
 .gar{color:var(--mut);font-size:13px;flex:none;margin-left:auto}
 .grpkids{padding-left:10px;border-left:2px solid var(--bd2)}
-.more{margin-top:9px;background:#21262d;border:1px solid var(--bd);color:var(--blu);
+.more{margin-top:9px;background:color-mix(in srgb,var(--card),var(--bd));border:1px solid var(--bd);color:var(--blu);
 border-radius:8px;cursor:pointer;font-size:13px;padding:7px 12px;width:100%}
 .more:hover{border-color:var(--blu)}
 .empty{color:var(--mut);font-size:13px;padding:5px 0}
@@ -1397,8 +1424,8 @@ border-radius:8px;cursor:pointer;font-size:13px;padding:7px 12px;width:100%}
 footer{text-align:center;color:var(--mut);font-size:12px;padding:16px}
 /* Tap-through detail: rows with data-open open a full-screen panel above the
    live page (which keeps polling underneath, untouched). */
-.clk{cursor:pointer}.clk:hover{background:#1c2129}
-.lnk{background:#21262d;border:1px solid var(--bd);color:var(--blu);border-radius:6px;
+.clk{cursor:pointer}.clk:hover{background:color-mix(in srgb,var(--fg) 5%,var(--bg))}
+.lnk{background:color-mix(in srgb,var(--card),var(--bd));border:1px solid var(--bd);color:var(--blu);border-radius:6px;
 cursor:pointer;font-size:13px;padding:5px 10px}
 .lnk:hover{border-color:var(--blu)}
 #dv{position:fixed;inset:0;background:var(--bg);z-index:20;overflow-y:auto}
@@ -1413,6 +1440,7 @@ border-radius:8px;padding:10px;font-size:13px;margin-top:6px}
   <span id="hdot" class="dot"></span>
   <div class="htitle">MaestroACP<span class="mut"> · 실행 현황</span></div>
   <span id="hstate" class="pill">…</span>
+  <button id="theme" class="pill" type="button" aria-label="테마 전환 (자동/라이트/다크)">◐ 자동</button>
   <span id="clock" class="mut mono"></span>
 </header>
 <main class="wrap" id="app">
@@ -1565,6 +1593,16 @@ const fill=(id,list,render,emptyMsg)=>{$(id).innerHTML=list.length?list.map(rend
 // collapsed). Open/closed is kept per section+group in localStorage so it survives both
 // the 3s poll (leaf innerHTML swap) and a full reload. group='' or singletons stay as
 // standalone rows, rendered in place by the section's own row renderer.
+// Theme toggle: header button cycles auto→light→dark→auto. auto leaves <html>
+// with no data-theme (CSS falls back to prefers-color-scheme). The pre-paint
+// <head> script already set data-theme from storage before first paint; here we
+// keep the button label in sync and handle clicks. Storage key = 'mdash.theme'.
+const THEMES=['auto','light','dark'];
+const THEME_LBL={auto:'◐ 자동',light:'☀ 라이트',dark:'🌙 다크'};
+const themeGet=()=>{try{const t=localStorage.getItem('mdash.theme');return THEMES.includes(t)?t:'auto'}catch(_){return 'auto'}};
+const themeApply=t=>{const el=document.documentElement;if(t==='light'||t==='dark')el.dataset.theme=t;else delete el.dataset.theme;const b=$('theme');if(b)b.textContent=THEME_LBL[t]||THEME_LBL.auto};
+const themeSet=t=>{try{localStorage.setItem('mdash.theme',t)}catch(_){}themeApply(t)};
+
 const grpKey=(sec,g)=>'mdash.grp.'+sec+'.'+g;
 const grpOpen=(sec,g)=>{try{return localStorage.getItem(grpKey(sec,g))==='1'}catch(_){return false}};
 const grpSet=(sec,g,v)=>{try{localStorage.setItem(grpKey(sec,g),v?'1':'0')}catch(_){}};
@@ -1809,7 +1847,9 @@ async function cp(el){try{await navigator.clipboard.writeText(el.dataset.cp);con
 
 function mount(){
   // delegated on document so it survives every leaf innerHTML swap
+  themeApply(themeGet());                    // sync button label (pre-paint set data-theme)
   document.addEventListener('click',e=>{
+    const tb=e.target.closest('#theme');if(tb){const i=THEMES.indexOf(themeGet());themeSet(THEMES[(i+1)%3]);return}
     const c=e.target.closest('.cp');if(c){e.stopPropagation();cp(c);return}
     if(e.target.closest('#dv-back')){history.back();return}
     if(e.target.closest('#dv-reload')){if(dstack.length)showDetail(dstack[dstack.length-1]);return}
