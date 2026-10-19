@@ -603,8 +603,11 @@ _PARENT_TITLE_RE = re.compile(r"\s*[(（]\s*(?:부모|parent)\s*[)）]\s*$|,\s*(
 
 def collect_projects(assignments: list[dict]) -> list[dict]:
     """Top-level projects at a glance: every live (open/waiting/blocked) task with no
-    parent of its own that is a parent — is_parent=1 or some task names it as
-    parent_slug (e.g. advote-voting, whose kids link by `parent:` only). One row per
+    *live* parent of its own that is a parent — is_parent=1 or some task names it as
+    parent_slug (e.g. advote-voting, whose kids link by `parent:` only). A parent
+    whose own parent is already done/cancelled (or unknown) is a root too: a
+    hand-split umbrella under a closed root (mulkko-121-block-editor under the done
+    mulkko-pivot-project, 2026-10-19) used to fall through to the human list. One row per
     project with its subtree's leaf progress and how many of its tasks the worker is
     running / has parked. These rows are the umbrella, not work a person picks up, so
     collect_status passes their slugs to collect_human, which leaves them out.
@@ -633,7 +636,7 @@ def collect_projects(assignments: list[dict]) -> list[dict]:
     state = {r["task"]: r for r in assignments}
     last = _last_activity(assignments)
     for slug, t in tasks.items():
-        if (t["status"] not in LIVE_PROJECT or t["parent"]
+        if (t["status"] not in LIVE_PROJECT or _live_parent(t["parent"], tasks)
                 or not (t["is_parent"] or kids.get(slug))):
             continue
         done = total = active = attn = 0
@@ -664,7 +667,7 @@ def collect_projects(assignments: list[dict]) -> list[dict]:
             done += st == "done"
         rows.append({"slug": slug,
                      "title": _PARENT_TITLE_RE.sub("", t["title"] or "") or slug,
-                     "project": _root_label(slug),
+                     "project": _root_label(_top_ancestor(slug, tasks)),
                      "status": t["status"], "worker_mode": t["wm"],
                      # additive: server decides open vs. held so the client can fold
                      # waiting/blocked umbrellas under a collapsed "보류" toggle.
@@ -679,6 +682,24 @@ def collect_projects(assignments: list[dict]) -> list[dict]:
     rows.sort(key=lambda r: r["last_activity"], reverse=True)   # newest first …
     rows.sort(key=lambda r: (-r["active"], -(r["priority"] or 0)))  # … stable under these
     return rows
+
+
+def _live_parent(parent: str, tasks: dict[str, dict]) -> bool:
+    """True when `parent` names a task that is itself still live (open/waiting/blocked).
+    A done/cancelled or unknown parent does not make its child a mid-level node."""
+    return bool(parent) and (tasks.get(parent) or {}).get("status") in LIVE_PROJECT
+
+
+def _top_ancestor(slug: str, tasks: dict[str, dict]) -> str:
+    """The root of `slug`'s parent chain (closed ancestors included) — the chip label
+    source, so a project row under a done root keeps the tree's colour and name."""
+    cur, depth = slug, 0
+    while depth < 20:
+        par = (tasks.get(cur) or {}).get("parent") or ""
+        if not par or par == cur or par not in tasks:
+            return cur
+        cur, depth = par, depth + 1
+    return cur
 
 
 def _has_open_child(slug: str, kids: dict[str, list[str]], tasks: dict[str, dict]) -> bool:
@@ -786,6 +807,8 @@ def collect_human(assignments: list[dict], today: dt.date | None = None,
                         continue                       # already listed, or auto-worked
                     if slug in projects:
                         continue                       # an umbrella → 프로젝트 card
+                    if slug in umbrellas:
+                        continue                       # a parent whose kids carry the work
                     owner = reg.for_project(slug) if reg else None
                     human_owned = bool(owner and owner.id in human_ids)
                     if wm == "blocked":

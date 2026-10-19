@@ -387,6 +387,51 @@ class ProjectsSectionTests(unittest.TestCase):
         active = {r["task"]: r for r in d["active"]}
         self.assertEqual(active["fxp-b"]["project"], "fxp")
 
+    def test_parent_under_closed_root_is_a_project_not_a_human_todo(self):
+        # mulkko-121-block-editor (2026-10-19): a hand-split parent (is_parent=0,
+        # worker_mode off, three open leaves) whose own root is already done. It is
+        # an umbrella, so it belongs in the 프로젝트 card — not in "사람 몫 · 미설정".
+        con = sqlite3.connect(M.TODO_DB)
+        con.executemany(
+            "INSERT INTO tasks VALUES (?,?,?,'-',NULL,'',?,?,?,?)", [
+                ("fxz-project", "closed root", "done", "todo", None, 0, "off"),
+                ("fxz-121", "블록 편집기 (부모)", "open", "todo", "fxz-project", 0, "off"),
+                ("fxz-121a", "core", "open", "todo", "fxz-121", 0, "auto"),
+                ("fxz-121b", "ui", "done", "todo", "fxz-121", 0, "auto"),
+                ("fxz-120", "sibling leaf", "open", "todo", "fxz-project", 0, "manual"),
+            ])
+        con.commit()
+        con.close()
+        d = M.collect_status()
+        by = {p["slug"]: p for p in d["projects"]}
+        self.assertIn("fxz-121", by)
+        self.assertNotIn("fxz-project", by)              # closed root stays out
+        p = by["fxz-121"]
+        self.assertEqual(p["title"], "블록 편집기")
+        self.assertEqual((p["leaves_done"], p["leaves_total"]), (1, 2))
+        self.assertEqual(p["project"], "fxz")           # chip = top ancestor's label
+        human = {r["slug"]: r for r in d["human"] + d["human_later"]}
+        self.assertNotIn("fxz-121", human)
+        self.assertIn("fxz-120", human)                  # a plain leaf under the closed root still shows
+        self.assertEqual(human["fxz-120"]["project"], "fxz")
+
+    def test_mid_level_parent_with_open_children_leaves_the_human_list(self):
+        # A hand-split parent under a LIVE root is not a project row (its root is),
+        # and not a person's todo either — its open children carry the work.
+        con = sqlite3.connect(M.TODO_DB)
+        con.executemany(
+            "INSERT INTO tasks VALUES (?,?,?,'-',NULL,'',?,?,?,?)", [
+                ("fxp-hand", "hand split (부모)", "open", "todo", "fxp", 0, "off"),
+                ("fxp-hand-a", "ha", "open", "todo", "fxp-hand", 0, "auto"),
+            ])
+        con.commit()
+        con.close()
+        d = M.collect_status()
+        self.assertEqual({p["slug"] for p in d["projects"]}, {"fxp", "fxq"})
+        human = {r["slug"] for r in d["human"] + d["human_later"]}
+        self.assertNotIn("fxp-hand", human)
+        self.assertIn("fxp-d", human)                    # control: a real leaf stays
+
     def test_root_label_strips_generic_parent_suffix(self):
         self.assertEqual(M._root_label("ai-stock-trading-agent"), "ai-stock-trading")
         self.assertEqual(M._root_label("worldgraph-project"), "worldgraph")
