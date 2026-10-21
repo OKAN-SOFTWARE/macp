@@ -88,10 +88,12 @@ valid_instance() { valid_owner "$1"; }
 # historic lease.json/lease.lock and NO CDP injection (the .mjs tools fall back
 # to 9277). Any other name gets its own lease.<name>.json / lease.<name>.lock,
 # and its CDP address from ports.env under instances/<name>/ or scratch/<name>/
-# (leaf 1 / browser.sh writes it). ports.env may name the address either as a
-# full MACP_BROWSER_CDP= line or as a CDP_PORT= entry in the assignment table;
-# prefer the explicit URL, else build one from the port. A missing ports.env
-# leaves CDP_URL empty (lease-only ops don't need it).
+# (leaf 1 / browser.sh writes it). ports.env may name the address as a full
+# MACP_BROWSER_CDP= line, a CDP_PORT= entry in the assignment table, or the
+# lowercase cdp=<port> that browser.sh write_ports_env actually writes; prefer
+# the explicit URL, then CDP_PORT, then cdp, and build the URL only from a port
+# of 1-5 digits. A missing ports.env or a bad port leaves CDP_URL empty
+# (lease-only ops don't need it).
 resolve_instance() {
   if [ "$INSTANCE" = "default" ]; then
     LEASE="$DIR/lease.json"
@@ -110,13 +112,21 @@ resolve_instance() {
   fi
   [ -n "$pe" ] || return 0
   CDP_URL=$(
+    # ports.env is the authority for this instance: drop anything the caller's
+    # env carries under the same names before sourcing it.
+    unset MACP_BROWSER_CDP CDP_PORT cdp
     # shellcheck disable=SC1090
     . "$pe" >/dev/null 2>&1
+    port=''
     if [ -n "${MACP_BROWSER_CDP:-}" ]; then
       printf '%s' "$MACP_BROWSER_CDP"
+      exit 0
     elif [ -n "${CDP_PORT:-}" ]; then
-      printf 'http://127.0.0.1:%s' "$CDP_PORT"
+      port=$CDP_PORT
+    elif [ -n "${cdp:-}" ]; then
+      port=$cdp
     fi
+    [[ $port =~ ^[0-9]{1,5}$ ]] && printf 'http://127.0.0.1:%s' "$port"
   )
 }
 
@@ -318,11 +328,30 @@ lease() {
   esac
 }
 
+# Run browser.sh with stdin=/dev/null and stdout+stderr in a temp file, then
+# replay that file on stderr. browser.sh backgrounds Chrome/Xvfb, and a
+# background child that inherited our stderr pipe would keep
+# `out=$(macp-browser scratch acquire …)` from ever returning.
+browser_sh_detached() {
+  local log rc
+  log=$(mktemp "${TMPDIR:-/tmp}/macp-browser.XXXXXX") || {
+    echo "macp-browser: mktemp failed" >&2
+    return 1
+  }
+  bash "$DIR/browser.sh" "$@" </dev/null >"$log" 2>&1
+  rc=$?
+  cat "$log" >&2
+  rm -f "$log"
+  return "$rc"
+}
+
 # Throwaway login-less instances. acquire auto-names one (s-<owner>-<utc>), spins
 # it up via browser.sh scratch-up, leases it (always succeeds — fresh instance),
 # and prints one JSON line. release drops the lease and tears the instance down.
 # gc tears down every scratch instance whose lease is gone or expired. Never acts
 # on `default` (browser.sh refuses scratch-down default as a second guard).
+# browser.sh scratch-up/scratch-down run detached from the caller's
+# stdin/stdout/stderr (browser_sh_detached).
 scratch() {
   local sub="${1:-}" seen='' purpose='' purpose_set='' name='' acquired
   TTL=30
@@ -368,7 +397,7 @@ scratch_acquire() {
     echo "macp-browser: flock not found (needed for lease acquire/release)" >&2
     exit 69
   }
-  bash "$DIR/browser.sh" scratch-up "$INSTANCE" >&2 || {
+  browser_sh_detached scratch-up "$INSTANCE" || {
     echo "macp-browser: browser.sh scratch-up $INSTANCE failed" >&2
     exit 1
   }
@@ -405,7 +434,7 @@ scratch_release() {
   INSTANCE="$n"
   resolve_instance
   rm -f "$LEASE"
-  bash "$DIR/browser.sh" scratch-down "$n" >&2 || {
+  browser_sh_detached scratch-down "$n" || {
     echo "macp-browser: browser.sh scratch-down $n failed" >&2
     exit 1
   }
@@ -421,7 +450,7 @@ scratch_gc() {
     resolve_instance
     read_lease && continue   # live lease: leave it
     rm -f "$LEASE"
-    bash "$DIR/browser.sh" scratch-down "$nm" >&2 || true
+    browser_sh_detached scratch-down "$nm" || true
   done
 }
 
