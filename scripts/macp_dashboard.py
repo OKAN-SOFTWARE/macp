@@ -1274,6 +1274,80 @@ def collect_account_slots() -> dict:
     return out
 
 
+# ---- Queue (docs/dashboard-parity.md "큐") ----------------------------------
+QUEUE_KEYS = ("queue", "queue_upcoming", "queue_blocked")
+
+
+def _usage_hold_of(usage: dict | None) -> str | None:
+    """The tick's usage_hold verdict, read from the guard's state file decision
+    (collect_usage) — never `Orchestrator.usage_hold()`, which refreshes usage
+    state. Same fallback string as that method."""
+    if not usage or usage.get("allowed", True):
+        return None
+    return usage.get("reason") or "usage guard blocked"
+
+
+def _compute_queue(*, db: Path, assign: Path, registry: Path, now: float,
+                   usage: dict | None) -> dict:
+    """The three queue lists. Every wait verdict comes from the orchestrator's own
+    gates (`Orchestrator.queue_snapshot`); this only assembles contract rows."""
+    from todo_system.orchestrator import tasks as T
+    from todo_system.orchestrator.assignment import Ledger
+    from todo_system.orchestrator.orchestrator import Orchestrator, resolve_dispatch_limits
+    from todo_system.orchestrator.registry import load_registry
+
+    budget, cap, gradle_cap = resolve_dispatch_limits()
+    orch = Orchestrator(None, load_registry(registry), Ledger(assign),
+                        notify=lambda *a, **k: None, daily_run_budget=budget,
+                        max_parallel_per_repo=max(1, int(cap)),
+                        max_parallel_gradle_builds=max(0, int(gradle_cap)))
+    snap = orch.queue_snapshot(T.load_dispatchable(db), now=now,
+                               paused=orch.paused(), usage_hold=_usage_hold_of(usage),
+                               budget_exceeded=orch.budget_exceeded())
+    with _ro_conn(Path(db)) as con:
+        labels = _project_labels(con.execute(
+            "SELECT slug, COALESCE(parent_slug,''), COALESCE(tags,'') FROM tasks")) \
+            if con is not None else {}
+    meta = T.task_meta(db)
+
+    def head(slug: str, title: str) -> dict:
+        project = labels.get(slug) or _project_of(slug, "", [])
+        return {"slug": slug, "title": title or "", "project": project,
+                "group": _group_of({"project": project})}
+
+    queue = []
+    for r in snap:
+        p, m = r["payload"], meta.get(r["slug"], {})
+        queue.append({**head(r["slug"], p.get("summary") or ""),
+                      "worker_mode": p.get("worker_mode") or "",
+                      "priority": m.get("priority"),
+                      "checkout": r["checkout"],
+                      "wait": r["wait"],
+                      "wait_text": r["wait_text"],
+                      "holder": r["holder"],
+                      "since": r["since"] or m.get("updated") or ""})
+    upcoming = [{**head(r["slug"], r["title"]), "not_before": r["not_before"]}
+                for r in T.load_upcoming(db, now=dt.datetime.fromtimestamp(now))]
+    blocked = [{**head(r["slug"], r["title"]), "waiting_on": r["waiting_on"]}
+               for r in T.load_blocked(db)]
+    return {"queue": queue, "queue_upcoming": upcoming, "queue_blocked": blocked}
+
+
+def collect_queue(*, db: Path | None = None, assign: Path | None = None,
+                  registry: Path | None = None, now: float | None = None,
+                  usage: dict | None = None) -> dict:
+    """/api/status `queue` / `queue_upcoming` / `queue_blocked` — what is waiting,
+    in tick order, and why. Read-only (no ledger/mailbox/usage writes, no
+    network). Fail-soft: any error yields `[]` for all three keys. `cli queue`
+    calls this same function, so the CLI and the web read identical rows."""
+    try:
+        return _compute_queue(db=Path(db or TODO_DB), assign=Path(assign or ASSIGN),
+                              registry=Path(registry or REGISTRY),
+                              now=time.time() if now is None else now, usage=usage)
+    except Exception:
+        return {k: [] for k in QUEUE_KEYS}
+
+
 def collect_status() -> dict:
     a = collect_assignments()
     tstatus = _todo_status_map()
@@ -1382,6 +1456,7 @@ def collect_status() -> dict:
         # object is attached HERE (not folded into it): /api/status.account.slots.
         "account": {**collect_account_runtime(collect_account()),
                     "slots": collect_account_slots()},
+        **collect_queue(usage=usage),
     }
 
 
@@ -1472,6 +1547,8 @@ font-size:12px;font-weight:600}
 .rmeta{display:flex;align-items:center;justify-content:flex-end;gap:6px;
 flex:0 1 auto;min-width:0;flex-wrap:wrap}
 .age{color:var(--mut);font-size:12px;white-space:nowrap}
+.rmeta.qd{max-width:42%}
+.qdeps{white-space:normal;overflow-wrap:anywhere;text-align:right}
 .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
 .badge{padding:2px 8px;border-radius:6px;font-size:12px;font-weight:600;white-space:nowrap}
 /* Badges: tint = semantic token at 15% over --card, text = the token darkened 25%
@@ -1597,6 +1674,22 @@ border-radius:8px;padding:10px;font-size:13px;margin-top:6px}
     <button class="more" data-sec="active" hidden>더보기</button>
   </section>
 
+  <!-- 큐: 디스패치 대기 순서·사유 (서버 판정, 읽기 전용). 기본 접힘, 그룹 폴딩 없음. -->
+  <section class="card" id="c-queue">
+    <details id="d-queue">
+      <summary>큐 <span class="cnt" id="cnt-queue">0</span></summary>
+      <div class="list" id="queue"></div>
+      <details id="d-queue-upcoming" hidden style="margin-top:8px">
+        <summary>⏳ 예약됨 <span class="cnt" id="cnt-queue-upcoming">0</span></summary>
+        <div class="list" id="queue-upcoming"></div>
+      </details>
+      <details id="d-queue-blocked" hidden style="margin-top:8px">
+        <summary>🔗 선행 대기 <span class="cnt" id="cnt-queue-blocked">0</span></summary>
+        <div class="list" id="queue-blocked"></div>
+      </details>
+    </details>
+  </section>
+
   <!-- 이하 이력·참고·계측: 기본 접힘 '시스템 상세' 한 카드로 합침. 안의 기존
        <details>/<div id> 는 중첩으로 보존(id·cnt-* 앵커 불변). runs 는 '이력'에
        흡수되므로 cnt-runs/#runs 는 숨긴 자리표시로만 남긴다. -->
@@ -1681,6 +1774,21 @@ const runRow=r=>{const w=r.when||'';return `<div class="row clk" data-open="run:
 const recentRow=r=>`<div class="row clk" data-open="task:${esca(r.task)}"><div class="main"><div>${tlabel(r.task,r.title,r.project)}</div><div class="note">${esc(r.note)||'—'}</div></div><div class="rmeta">${badge(r.state)}${r.todo_status&&r.todo_status!=='open'?` <span class="age">(${esc(r.todo_status)})</span>`:''} <span class="age mono">${esc(r.age)}</span></div></div>`;
 const agentRow=a=>`<div class="row"><div class="main"><div><span class="dot" style="display:inline-block;width:9px;height:9px;margin-right:6px;background:${a.alive?'var(--grn)':'var(--mut)'}"></span>${esc(a.id)} <span class="note" style="display:inline">${esc(a.kind)}</span></div><div class="note">${esc(a.host)||'—'}</div></div><span class="age mono">${a.age?esc(a.age)+' 전':'—'}</span></div>`;
 const depRow=r=>`<div class="row"><div class="main"><div class="ttl mono">${esc(r.name)}</div><div class="note">${r.provides?'provides: '+esc(r.provides):'—'}${(r.depends_on||[]).length?' · ← '+r.depends_on.map(esc).join(', '):''}${(r.consumers||[]).length?' · → '+r.consumers.map(esc).join(', '):''}</div></div></div>`;
+
+// 큐 (docs/dashboard-parity.md "큐"): the server judges `wait`; rows render in the
+// order received (tick order). Existing badge classes only — no new colours.
+const QW={next_tick:['다음 틱','b-run'],checkout_busy:['리포 사용중','b-def'],gradle_cap:['빌드 상한','b-def'],usage_hold:['HOLD','b-wait'],paused:['PAUSED','b-wait'],budget:['예산','b-wait'],cooldown:['재시도 대기','b-gray'],capacity:['재시도 대기','b-gray']};
+const qwBadge=w=>{const m=QW[w]||[w||'?','b-gray'];return `<span class="badge ${m[1]}">${esc(m[0])}</span>`};
+const queueRow=(r,i)=>`<div class="row clk" data-open="task:${esca(r.slug)}"><div class="main"><div><span class="age mono">${i+1}</span> ${tlabel(r.slug,r.title,r.project)}</div><div class="note">${[esc(r.wait_text),r.holder&&!(r.wait_text||'').includes(r.holder)?'← '+esc(r.holder):'',r.since?esc(md(String(r.since).slice(0,16)))+'부터':''].filter(Boolean).join(' · ')||'—'}</div></div><div class="rmeta">${qwBadge(r.wait)}</div></div>`;
+const upcomingRow=r=>`<div class="row clk" data-open="task:${esca(r.slug)}"><div class="main"><div>${tlabel(r.slug,r.title,r.project)}</div></div><div class="rmeta"><span class="age">${esc(md(r.not_before))}부터</span></div></div>`;
+const blockedRow=r=>`<div class="row clk" data-open="task:${esca(r.slug)}"><div class="main"><div>${tlabel(r.slug,r.title,r.project)}</div></div><div class="rmeta qd"><span class="age qdeps">${(r.waiting_on||[]).length?'← '+r.waiting_on.map(esc).join(', '):'선행 완료 — 언블락 대기'}</span></div></div>`;
+// Open/closed of the queue <details> survives reloads under the contract keys
+// mdash.sec.queue / mdash.sec.queue-upcoming / mdash.sec.queue-blocked.
+const QSEC={'d-queue':'queue','d-queue-upcoming':'queue-upcoming','d-queue-blocked':'queue-blocked'};
+const secKey=s=>'mdash.sec.'+s;
+function secMount(){for(const [id,s] of Object.entries(QSEC)){const el=$(id);if(!el)continue;
+  try{el.open=localStorage.getItem(secKey(s))==='1'}catch(_){}
+  el.addEventListener('toggle',()=>{try{localStorage.setItem(secKey(s),el.open?'1':'0')}catch(_){}})}}
 
 const fill=(id,list,render,emptyMsg)=>{$(id).innerHTML=list.length?list.map(render).join(''):empty(emptyMsg)};
 // Fold: within ONE section, rows sharing a non-empty `group` (count>=2) collapse into
@@ -1870,6 +1978,17 @@ function update(d){
   const abtn=document.querySelector('.more[data-sec="active"]');
   if(abtn){if(d.active.length>ACTLIM){abtn.hidden=false;abtn.textContent=showAll.active?'접기':`더보기 (+${d.active.length-ACTLIM})`}else abtn.hidden=true}
 
+  // 큐: server order as-is, no group folding (the order is the information).
+  const q=d.queue||[],qu=d.queue_upcoming||[],qb=d.queue_blocked||[];
+  $('cnt-queue').textContent=q.length;
+  fill('queue',q,queueRow,'큐 비어 있음');
+  $('cnt-queue-upcoming').textContent=qu.length;
+  $('cnt-queue-blocked').textContent=qb.length;
+  fill('queue-upcoming',qu,upcomingRow,'없음');
+  fill('queue-blocked',qb,blockedRow,'없음');
+  $('d-queue-upcoming').hidden=!qu.length;
+  $('d-queue-blocked').hidden=!qb.length;
+
   renderHistory(d);
   $('cnt-runs').textContent=d.runs.length;
   // small, non-showy: how many of the detail subsections have any content (0–4).
@@ -1943,6 +2062,7 @@ async function cp(el){try{await navigator.clipboard.writeText(el.dataset.cp);con
 function mount(){
   // delegated on document so it survives every leaf innerHTML swap
   themeApply(themeGet());                    // sync button label (pre-paint set data-theme)
+  secMount();                                // restore the queue sections' open state
   document.addEventListener('click',e=>{
     const tb=e.target.closest('#theme');if(tb){const i=THEMES.indexOf(themeGet());themeSet(THEMES[(i+1)%3]);return}
     const c=e.target.closest('.cp');if(c){e.stopPropagation();cp(c);return}
