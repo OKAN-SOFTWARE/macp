@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import base64
 import datetime as dt
+import hashlib
 import http.client
 import importlib.util
 import json
@@ -2058,3 +2059,195 @@ class StatusSingleFlightTests(unittest.TestCase):
         finally:
             srv.shutdown()
             srv.server_close()
+
+
+# ---- UI language (macp-ui-language-2-dashboard) -----------------------------
+# The ko goldens were captured from the pre-i18n page, before any string moved
+# into todo_system/i18n.py: with `language = "ko"` the dashboard must serve the
+# exact same bytes. Each test sets MACP_LANGUAGE itself rather than leaning on
+# the conftest pin.
+
+_KO_HTML_SHA256 = "6a46e3157108c6c57f4620bd23f32b8518fd66cd94fec1c1705b48cf706a0091"
+_KO_HTML_LEN = 44138
+_HANGUL = re.compile("[가-힣]")
+
+
+def _worker_state_cases(label_a="a", label_b="b", note="note"):
+    """(kwargs, expected worker_state) for every branch of determine_worker_state."""
+    base = dict(stage_count=0, in_flight=[], dispatchable_checkouts=[], paused=False,
+                usage_allowed=True, runs_today=0, budget=None, cap=1)
+    url_a = f"https://github.com/x/{label_a}.git"
+    url_b = f"https://github.com/x/{label_b}.git"
+    return [
+        ("paused", {**base, "paused": True}),
+        ("hold", {**base, "usage_allowed": False}),
+        ("budget", {**base, "runs_today": 3, "budget": 3}),
+        ("running", {**base, "stage_count": 2}),
+        ("post_run_note", {**base, "in_flight": [{"label": label_a, "note": note}]}),
+        ("post_run_bare", {**base, "in_flight": [{"label": label_a, "note": ""}]}),
+        ("post_run_many", {**base, "in_flight": [{"label": label_b}, {"label": label_a}]}),
+        ("contended", {**base, "dispatchable_checkouts": [url_a, url_a]}),
+        ("transition", {**base, "dispatchable_checkouts": [url_a, url_b]}),
+        ("no_work", base),
+    ]
+
+
+def _sms_handler(host="127.0.0.1:8787"):
+    h = object.__new__(M.Handler)
+    h.headers = {"Host": host}
+    return h
+
+
+class KoGolden(unittest.TestCase):
+    """ko output pinned byte for byte (captured before the i18n refactor)."""
+
+    def setUp(self):
+        p = mock.patch.dict(os.environ, {"MACP_LANGUAGE": "ko"})
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_html_bytes_pinned(self):
+        b = M.HTML.encode("utf-8")
+        self.assertEqual(len(b), _KO_HTML_LEN)
+        self.assertEqual(hashlib.sha256(b).hexdigest(), _KO_HTML_SHA256)
+
+    def test_worker_state_details_ko(self):
+        want = {
+            "paused": ("paused", "일시정지(PAUSED) — 새 작업 디스패치 중단"),
+            "hold": ("hold", "usage guard HOLD — 사용량 한도로 대기"),
+            "budget": ("budget", "일일 실행 예산 도달 (3/3) — 리셋까지 대기"),
+            "running": ("running", "워커 실행 중 — claude 스테이지 2개"),
+            "post_run_note": ("post_run", "a 후처리 중 — note"),
+            "post_run_bare": ("post_run", "a 후처리 중"),
+            "post_run_many": ("post_run", "2건 후처리 중 (a, b)"),
+            "contended": ("waiting_serial",
+                          "직렬 대기 — a 2건가 한 체크아웃을 공유 (repo당 최대 1개)"),
+            "transition": ("waiting_serial", "다음 틱에 디스패치 예정 (2건 대기)"),
+            "no_work": ("no_work", "디스패치 가능한 태스크 없음"),
+        }
+        for name, kw in _worker_state_cases():
+            self.assertEqual(M.determine_worker_state(**kw), want[name], name)
+
+    def test_collect_human_parked_fallback_ko(self):
+        a = [{"task": "p1", "state": "awaiting_human", "note": "", "project": "x"}]
+        with mock.patch.object(M, "TODO_DB", Path(tempfile.mkdtemp()) / "missing.db"), \
+                mock.patch.object(M, "REGISTRY", Path("/nonexistent/registry.yaml")):
+            rows = M.collect_human(a, today=dt.date(2049, 1, 10))
+        self.assertEqual(rows[0]["action"], "검토/승인 대기")
+
+    def test_sms_setup_page_ko(self):
+        with mock.patch.dict(os.environ, {"MACP_SMS_TOKEN": "tok"}):
+            page = _sms_handler()._sms_setup_page()
+        self.assertEqual(page, (
+            "<!doctype html><meta charset=utf-8>"
+            '<meta name=viewport content="width=device-width,initial-scale=1">'
+            "<title>SMS relay setup</title><body style='font-family:sans-serif;padding:1em'>"
+            "<h2>SMS 릴레이 설정</h2>"
+            '<p><a style="font-size:1.4em" href="macpsms://setup?url=http%3A%2F%2F127.0.0.1'
+            '%3A8787%2Fapi%2Fsms&amp;token=tok">SMS 릴레이 앱에 설정 적용</a></p>'
+            "<p>endpoint: <code>http://127.0.0.1:8787/api/sms</code></p></body>"))
+        with mock.patch.dict(os.environ, {"MACP_SMS_TOKEN": ""}):
+            page = _sms_handler()._sms_setup_page()
+        self.assertEqual(page, (
+            "<!doctype html><meta charset=utf-8>"
+            '<meta name=viewport content="width=device-width,initial-scale=1">'
+            "<title>SMS relay setup</title><body style='font-family:sans-serif;padding:1em'>"
+            "<h2>SMS 릴레이 설정</h2><p>MACP_SMS_TOKEN is not set on the host.</p></body>"))
+
+    def test_served_root_equals_html_ko(self):
+        with _LiveServer(None) as s:
+            status, _, body = s.get("/")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, M.HTML.encode("utf-8"))
+        self.assertEqual(hashlib.sha256(body).hexdigest(), _KO_HTML_SHA256)
+
+
+class EnServerStrings(unittest.TestCase):
+    """With language = en the strings the server builds carry no Hangul."""
+
+    def setUp(self):
+        p = mock.patch.dict(os.environ, {"MACP_LANGUAGE": "en"})
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_worker_state_details_en(self):
+        got = {name: M.determine_worker_state(**kw) for name, kw in _worker_state_cases()}
+        for name, (_, detail) in got.items():
+            self.assertIsNone(_HANGUL.search(detail), (name, detail))
+        # the enum values are the JSON contract — language never touches them
+        self.assertEqual([s for s, _ in got.values()],
+                         ["paused", "hold", "budget", "running", "post_run", "post_run",
+                          "post_run", "waiting_serial", "waiting_serial", "no_work"])
+        self.assertEqual(got["budget"][1],
+                         "daily run budget reached (3/3) — waiting for reset")
+        self.assertEqual(got["post_run_note"][1], "a post-processing — note")
+        self.assertEqual(got["contended"][1],
+                         "waiting in series — a ×2 share one checkout (max 1 per repo)")
+        self.assertEqual(got["no_work"][1], "no dispatchable tasks")
+
+    def test_collect_human_parked_fallback_en(self):
+        a = [{"task": "p1", "state": "awaiting_human", "note": "", "project": "x"}]
+        with mock.patch.object(M, "TODO_DB", Path(tempfile.mkdtemp()) / "missing.db"), \
+                mock.patch.object(M, "REGISTRY", Path("/nonexistent/registry.yaml")):
+            rows = M.collect_human(a, today=dt.date(2049, 1, 10))
+        self.assertEqual(rows[0]["action"], "awaiting review/approval")
+
+    def test_sms_setup_page_en(self):
+        for tok in ("tok", ""):
+            with mock.patch.dict(os.environ, {"MACP_SMS_TOKEN": tok}):
+                page = _sms_handler()._sms_setup_page()
+            self.assertIsNone(_HANGUL.search(page), page)
+            self.assertIn("<h2>SMS relay setup</h2>", page)
+        with mock.patch.dict(os.environ, {"MACP_SMS_TOKEN": "tok"}):
+            self.assertIn(">Apply settings in the SMS Relay app</a>",
+                          _sms_handler()._sms_setup_page())
+
+
+class RenderHtmlByLanguage(unittest.TestCase):
+    """The page template carries @@key@@ markers; render_html(lang) fills them."""
+
+    def test_render_html_ko_is_html(self):
+        self.assertEqual(M.render_html("ko"), M.HTML)
+
+    def test_template_has_no_hangul(self):
+        # every Korean word on the page lives in i18n.DASHBOARD, none in the template
+        self.assertIsNone(_HANGUL.search(M._HTML_TEMPLATE))
+
+    def test_render_html_en_has_no_hangul(self):
+        en = M.render_html("en")
+        bad = [ln for ln in en.splitlines() if _HANGUL.search(ln)]
+        self.assertEqual(bad, [])
+
+    def test_render_html_no_leftover_markers(self):
+        from todo_system import i18n
+        used = set(M._MARKER_RE.findall(M._HTML_TEMPLATE))
+        self.assertTrue(used)
+        for lang in ("ko", "en"):
+            self.assertNotIn("@@", M.render_html(lang), lang)
+            self.assertEqual(used - set(i18n.DASHBOARD[lang]), set(), lang)
+        # and no table entry is dead weight
+        self.assertEqual(set(i18n.DASHBOARD["ko"]) - used, set())
+
+    def test_render_html_en_sets_lang_and_locale(self):
+        en = M.render_html("en")
+        self.assertIn('<html lang="en">', en)
+        self.assertIn("toLocaleString('en-US',", en)
+        self.assertIn('<html lang="ko">', M.HTML)
+        self.assertIn("toLocaleString('ko-KR',", M.HTML)
+
+    def test_render_html_en_keeps_the_shell_hooks(self):
+        # ids, data-* hooks and the favicon are language-neutral
+        en, ko = M.render_html("en"), M.HTML
+        for pat in (r'id="[^"]+"', r'data-sec="[^"]+"', r"\$\('[^']+'\)"):
+            self.assertEqual(re.findall(pat, en), re.findall(pat, ko), pat)
+        self.assertNotIn("__FAVICON__", en)
+
+    def test_served_root_follows_language(self):
+        with mock.patch.dict(os.environ, {"MACP_LANGUAGE": "en"}), _LiveServer(None) as s:
+            status, _, body = s.get("/")
+        self.assertEqual(status, 200)
+        self.assertEqual(body, M.render_html("en").encode("utf-8"))
+        self.assertIsNone(_HANGUL.search(body.decode("utf-8")))
+        with mock.patch.dict(os.environ, {"MACP_LANGUAGE": "ko"}), _LiveServer(None) as s:
+            _, _, body = s.get("/")
+        self.assertEqual(hashlib.sha256(body).hexdigest(), _KO_HTML_SHA256)
