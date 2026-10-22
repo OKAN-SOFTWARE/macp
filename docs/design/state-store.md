@@ -154,6 +154,27 @@ class TodoCacheReader(ABC):   # 거울상: metrics._db_counts(:45-55) + cli.DB_P
 각 영역의 기존 구현(또는 그 하위클래스)을 **보유(has-a)**하고, 호출부는
 `StateStore`를 통해 그 영역에 닿는다.
 
+### 네트워크 백엔드 수용 점검 (§⑦ Cloud SQL · §⑧ 원격 접근 대비)
+
+②의 draft 시그니처가 네트워크 백엔드(§⑧ (a) 본부 HTTP 상태 API, §⑦ Cloud SQL)를 수용하는지 세 축으로 점검:
+
+- **동기 호출**: ledger(save/load/all/active)·mailbox(send/receive/ack)·kv(get/put/all) 시그니처는 전부
+  **동기**다. 네트워크 백엔드는 블로킹 HTTP/DB 클라이언트 + 호출당 타임아웃으로 수용 가능 — async 전환
+  **불필요**. 근거: 현행 mailbox 가 이미 git 전송을 **동기 블로킹**으로 돌리며 호출당 타임아웃을 건다
+  (`mailbox.py:43-45` `GIT_TIMEOUT_LOCAL_S=180`/`GIT_TIMEOUT_NETWORK_S=300`, 선택기 `_git_timeout`:58).
+  "네트워크를 타는 동기 상태 접근 + 내부 타임아웃"은 이미 코드에 있는 패턴이다.
+- **타임아웃**: 추상 시그니처엔 타임아웃 인자가 **없다**(의도) → 백엔드 구현이 내부 상수로 건다(mailbox 가
+  그렇듯). leaf ⑦(네트워크 백엔드)이 백엔드별 timeout(HTTP connect/read, DB statement)을 `mailbox.py:43-45`
+  처럼 모듈 상수로 둬야 한다(설계 요구).
+- **오류 타입**: 네트워크 실패를 표현할 **공통 예외**(예: `StateStoreUnavailable`)가 필요 — 호출부(워커 틱)가
+  이를 잡아 §⑧의 재시도(backoff)/로컬 큐 fallback 으로 연결되게. 현행은 git 실패가 subprocess 오류/타임아웃
+  으로 올라와 틱이 처리하는데, 네트워크 백엔드도 같은 자리에서 잡히도록 공통 예외로 승격한다.
+- **수용 결론(1차 근거)**: `open_mailbox`(`mailbox.py:341`)가 이미 **URI 스킴**으로 백엔드를 고르고
+  (`git://`→GitMailbox, `file://`→FileMailbox), 원격 Runner 가 `--uri "git://Worker/agents"`
+  (`orchestrator_runner_remote.sh:54-57`)로 그 팩토리를 탄다. 네트워크 백엔드 = **새 스킴 추가**
+  (`https://` 상태 API 또는 `postgres://`)이지 재작성이 아니다 → ②의 인터페이스는 네트워크 백엔드를
+  **수용한다**(동기·타임아웃·오류타입 세 축 모두 기존 mailbox 패턴으로 충족).
+
 ---
 
 ## ③ 모드 전환 설정 + external SQLite 스키마 초안
@@ -319,10 +340,15 @@ leaf ⑥의 자동화 스위트(`test_state_store_git_ops.py`)가 된다.
 
 ---
 
-## ⑥ 후속 leaf 지도 (②~⑥, +⑦ 선택)
+## ⑥ 후속 leaf 지도 (②~⑥ 필수 · ⑦ 원격 접근 · ⑧/⑧b/⑧c 트래커)
 
-각 leaf = 범위 한 줄 + touches 후보. ②~⑥은 **필수**, ⑦은 **선택**(다중 호스트 공유가
-필요해질 때). 순서는 직렬 의존(앞이 머지돼야 뒤가 안전):
+각 leaf = 범위 한 줄 + touches 후보. 순서는 직렬 의존(앞이 머지돼야 뒤가 안전). ②~⑥은 **필수**(상태
+저장소 추상화 본체), ⑦은 **원격 접근/네트워크 공유 백엔드**(다중 호스트 공유 필요 시, 부모 체인에서
+human_gate), ⑧·⑧b·⑧c 는 **트래커 어댑터**(§⑨ 설계를 구현):
+
+> **번호 공간 주의**: 여기 leaf 번호(②~⑧)는 **부모 태스크의 분해 단계**이고, 이 문서의 절 번호
+> (§①~§⑨)와는 **다른 공간**이다 — 우연히 겹칠 뿐이다. 대응: leaf ⑦ ↔ §⑦(예약 슬롯)·§⑧(원격 접근
+> 비교/권장), leaf ⑧/⑧b/⑧c ↔ §⑨(트래커).
 
 - **② `StateStore` ABC + `GitStateStore` 현상유지 어댑터** — 네 영역을 하위 표면으로 묶고
   git 백엔드가 현행 `Ledger`/`open_mailbox`/planner_state/todo.db 를 **그대로** 감싼다.
@@ -340,12 +366,232 @@ leaf ⑥의 자동화 스위트(`test_state_store_git_ops.py`)가 된다.
   (`worker.py`의 QUEUE/PLANNER·`metrics.py`의 LEDGER/DB·orchestrator)를 `StateStore`
   경유로 돌린다. *touches*: `todo_system/tests/test_state_store_git_ops.py`(신규) +
   `worker.py`·`metrics.py`·orchestrator 호출부.
-- **⑦ (선택, 다중 호스트 공유 필요 시) Cloud SQL(Postgres) 백엔드** — external 축을
-  네트워크 공유 DB 로 확장. **Supabase·Neon 금지**([[Decisions/2026-09-25-backend-unify-gcp-no-supabase]]);
-  **GCP Cloud SQL 만** 각주 확장. *touches*: 신규 백엔드 모듈 + 테스트.
+- **⑦ 원격 접근 / 네트워크 공유 백엔드 leaf (human_gate)** — external 축을 다른 머신의 러너가 공유
+  (§⑧ 상세·권장안을 흡수). 1차는 **(a) 본부 HTTP 상태 API + 토큰**(SQLite SoT 를 본부 한 곳에 유지);
+  네트워크 공유 DB 가 필요해지면 **(b) GCP Cloud SQL(Postgres) 만**(~$10~25/월, 사람 게이트 —
+  **Supabase·Neon 금지** [[Decisions/2026-09-25-backend-unify-gcp-no-supabase]]). (c) 현행 git inbox 는
+  상태 공유가 불필요한 원격 호스트의 baseline 으로 유지. 기존 "⑦ (선택) Cloud SQL" 불릿을 이 leaf 가
+  흡수. *touches*: 신규 상태 API 서버 + 클라이언트 모듈(또는 Cloud SQL 백엔드) + 테스트. 실제 네트워크
+  노출·프로비저닝은 **사람 결정**.
+- **⑧ 트래커 어댑터 leaf (§⑨ 설계)** — 외부 트래커 ↔ 태스크 md 브리지. 부모 체인 번호와 일치:
+  - **⑧ Jira(REST v3) 어댑터** · **⑧b GitHub Issues(REST) 어댑터** · **⑧c Linear(GraphQL) 어댑터**.
+  *touches*: `todo_system/orchestrator/tracker_adapter.py`(신규 `TrackerAdapter` ABC + `TaskRecord` DTO)
+  + provider별 모듈(`tracker_jira.py`/`tracker_github.py`/`tracker_linear.py`, 신규) + 테스트. `external_ref`
+  frontmatter 필드 배선(§⑨)과 polling 틱 훅 포함.
 
-> 열림 질문 해소: 부모 분해는 ②~⑦이지만 이 leaf 의 수용 기준은 ②~⑥을 필수로 본다.
-> 위처럼 ②~⑥을 필수, ⑦을 선택으로 적어 양쪽을 만족한다.
+> 열림 질문 해소: 상태 저장소 추상화의 수용 기준은 leaf ②~⑥(필수). leaf ⑦(원격 접근, human_gate)과
+> ⑧/⑧b/⑧c(트래커)는 §⑦~§⑨ 설계가 선행 조건을 깔아둔, 부모 체인의 후속 분해다.
+
+---
+
+## ⑦ 네트워크 공유 백엔드(Cloud SQL) — 예약 슬롯
+
+external 축(본부 볼트 밖 SQLite)을 **다중 호스트가 네트워크로 공유**할 때의 자리. §①~⑥의
+SQLite 는 본부(primary host) 로컬 파일이라 다른 머신이 직접 열 수 없다 — 네트워크 공유가
+필요해지면 상세 후보 비교는 **§⑧(원격 워커 접근)**, 구현 leaf 는 **§⑥ 지도의 leaf ⑦** 이다.
+**상시 외부 SaaS DB(Supabase·Neon)는 금지**하고 유료 인프라는 **GCP Cloud SQL 만**
+([[Decisions/2026-09-25-backend-unify-gcp-no-supabase]], [[Decisions/2026-10-13-macp-task-store]]),
+월 비용을 숫자로 밝히며(§⑧ (b) ~$10~25/월) 프로비저닝은 사람 결정이다. 이 절은 §⑥→§⑧ 번호
+점프를 막는 **예약 슬롯**으로, 새 설계 결정을 지어내지 않고 §⑧로 포워딩만 한다.
+
+---
+
+## ⑧ 원격 워커 접근 (external 모드에서 다른 머신의 러너가 같은 상태에 읽고/쓰기)
+
+§①~⑥은 external 모드의 상태를 **본부(primary host) 한 대의 볼트 밖 SQLite**
+(`~/.local/share/macp/state.sqlite`)에 두는 것으로 설계했다. 그런데 원격 호스트(Windows/WSL 등)의
+러너도 같은 상태를 읽고 써야 한다(사용자 요구: "외부 머신에서 동작하는 워커도 DB에 접근 가능해야").
+SQLite 파일은 로컬 파일 핸들이라 다른 머신이 직접 열 수 없으므로 네트워크 경로가 필요하다.
+
+**현행 원격 경로(baseline)** 는 **순수 git** 이다: `scripts/worker_remote_loop.sh` 가 볼트를 pull →
+`Worker/remote/<host>/inbox/*.md` 의 과제를 실행 → 결과(queue/run 산출물/episodes)를 push 하고,
+오케스트레이터 Runner 는 `scripts/orchestrator_runner_remote.sh:54-57` 로 `--uri "git://Worker/agents"`
+mailbox 를 쓴다(transport 는 전부 볼트 git). external 모드는 이 git-추적 상태를 볼트 밖으로 빼는 게
+목적이므로, 원격 접근도 "git 말고 무엇으로"를 정해야 한다.
+
+### 후보 비교표
+
+| 후보 | 비용(월 $) | 운영 부담 | 지연 | 오프라인 시 동작 | 보안 |
+|---|---|---|---|---|---|
+| **(a) 본부 HTTP 상태 API + 토큰** — SQLite 는 본부에만, 원격 러너가 HTTP(S)로 CRUD/claim 호출 | **$0**(본부 VM 상주, 추가 관리형 자원 없음) | 중 — 상태 API 서버(읽기/쓰기/claim)·인증·버전 관리 신규 | 낮음(네트워크 1홉) | **약함** — 본부 다운 시 못 닿음 → 로컬 큐로 degrade(아래) | 토큰(Secret Manager) + TLS, 선택적으로 Tailscale 테일넷 안에서만 리슨 |
+| (b) GCP Cloud SQL(Postgres) 각 호스트 직접 접속 | **~$10~25**([[Decisions/2026-10-13-macp-task-store]] C행; db-f1-micro~소형) | 높음 — 인스턴스·IAM·Auth Proxy·백업·스키마 마이그레이션 상시 운영 | 낮음~중 | 약함 — 외부 관리형 DB 의존(2026-09 Supabase 참사와 같은 SPOF 구조) | Cloud SQL IAM + Auth Proxy / 승인 네트워크 |
+| (c) 현행 git 동기화 유지 — external 은 **본부 전용**, 원격은 지금처럼 git inbox | **$0** | 낮음 — 이미 구축·운영 중(`worker_remote_loop.sh`) | 높음(pull/push 주기 = 수초~수분) | **강함** — git 은 비동기·오프라인 내성(못 닿으면 다음 틱에 이어붙음) | 기존 git 인증(토큰/SSH) 그대로 |
+| (a′) (a)를 Tailscale 등 메시 VPN 으로만 노출 | **$0**(무료 티어) | 중(+테일넷 ACL) | 낮음 | (a)와 동일 | 공개 IP 없음 — 테일넷 ACL 로 디바이스 단위 제한 |
+
+*비용 열은 관리형 자원의 월 과금만; 본부 VM 자체는 어느 후보든 상주하므로 공통 비용에서 뺐다.*
+
+### 권장안 + 이유
+
+**권장: (a) 본부 HTTP 상태 API + 토큰.** 단 **(c) git baseline 을 "상태 공유가 꼭 필요하지 않은 원격
+호스트"의 기본 fallback 으로 유지**하고, **(b) Cloud SQL 은 본부 단일 장애점이 실제 병목이 될 때만 가는
+사람-게이트 에스컬레이션**으로 둔다. 노출면을 줄이려면 (a)를 (a′)(Tailscale 변형)로 배치한다.
+
+근거(5열 + 프로젝트 prior):
+
+- **단일 SoT 유지**: (a)는 SQLite 권위 사본을 본부 한 곳에 그대로 둔다(§④의 "권위 사본은 SQLite,
+  `Worker/assignments/` 는 읽기전용 스냅샷"과 정합). (b)는 상태 SoT 를 또 하나의 상시 DB 로 옮겨 2026-09
+  Supabase 마비(큐 22일 정지)의 구조를 재현할 위험이 있다 — 상시 외부 DB 배제 방침
+  ([[Decisions/2026-09-25-backend-unify-gcp-no-supabase]], [[Decisions/2026-10-13-macp-task-store]])과 충돌.
+- **유료 인프라는 사람 게이트**: (a)/(c)는 $0(본부 상주 자원만). (b)만 월 ~$10~25 과금 + Cloud SQL 상시
+  운영 — 부모 체인의 ⑦(원격 접근)이 human_gate 인 이유다. 실제 네트워크 노출·유료 프로비저닝은 **사람 결정**.
+- **오프라인 내성**: (c)는 강하고 (a)는 약하지만, (a)의 약점은 아래 "본부 장애 시 동작"의 로컬 큐 degrade 로
+  상쇄된다 — 쓰기를 로컬에 적재했다가 복구 시 flush 하면 (c)의 비동기 내성을 쓰기 경로에서 회복한다.
+- **운영 최소**: (a)는 본부 상주 VM 에 엔드포인트 하나를 더하는 수준. (b)의 Cloud SQL 상시 운영 대비 가볍다.
+- **md=SoT 불변**: 태스크 소스는 external 모드에서도 md(§①)이고, **상태 저장소만** 네트워크화한다 — (a)는
+  상태 CRUD 만 API 로 노출하고 태스크 편집 인터페이스(파일)는 안 건드린다.
+
+### 인증 방식
+
+권장안 (a)/(a′)에 정합하는 레이어:
+
+- **토큰**: 러너→본부 API 요청에 bearer 토큰, 토큰은 본부 **Secret Manager** 에 보관(리포·볼트에 평문 금지).
+  공개 리포 설계라 실제 토큰 값·엔드포인트 host 는 여기 안 적는다.
+- **Google ID 토큰 서버 검증**(대안/강화): 2026-09-25 결정의 표준 인증(Cloud Run + ID 토큰 서버 검증)과
+  동형 — API 가 호출자의 ID 토큰을 서버에서 검증.
+- **Tailscale ACL**(네트워크 레이어): API 를 테일넷에만 리슨시키고 디바이스 단위 ACL 로 제한 → 토큰이
+  유출돼도 공개 네트워크에서 도달 불가. (a′) 권장 배치의 핵심.
+
+### 본부 장애 시 원격 러너 동작
+
+(a)의 오프라인 약점을 메우는 핵심 규칙:
+
+1. **재시도(backoff)**: 상태 API 호출 실패 시 지수 backoff 로 재시도(현행 git push 가 3회 재시도하는 것과
+   동형 — `scripts/worker_remote_loop.sh:79-87`).
+2. **로컬 큐 적재 → 복구 시 flush**: 재시도 한계를 넘으면 원격 러너는 쓰기(상태 변경·claim 해제·결과)를
+   **로컬 append-only 아웃박스**(호스트 로컬 파일, 볼트 밖)에 적재하고 과제 진행을 멈춘다. 본부 복구가
+   감지되면 아웃박스를 순서대로 flush(멱등 upsert 라 중복 적용 안전). 이로써 쓰기 경로에서 (c)의 비동기
+   내성을 회복한다.
+3. **읽기 degrade**: 새 과제 claim 은 본부가 살아 있어야만 가능(claim 은 공유 상태 쓰기) → 본부 다운 중
+   원격은 **진행 중 과제만 마치고 신규는 안 집는다**(중복 실행 방지와 정합).
+
+### at-least-once · 중복 실행 방지 (lease/claim)
+
+- **claim = lease**: 러너가 과제를 집을 때 공유 상태(ledger 행 또는 전용 claims 테이블)에 **lease**
+  (소유자 host/run_id · 획득 ts · TTL 만료 ts)를 원자적으로 기록한다. 이미 유효 lease 가 있으면 다른
+  러너는 그 과제를 집지 않는다 → 동시 두 호스트의 중복 실행 방지.
+- **TTL 로 크래시 복구**: 러너가 과제 도중 죽으면 lease 가 TTL 만료되어 다른 러너가 재획득 가능. 이때
+  과제는 다시 실행될 수 있으나(at-least-once), 스테이지 파이프라인은 재시도=전체 재실행으로 재실행
+  안전하게 설계돼 있어 허용된다.
+- **mailbox 틈브스톤과의 관계**(`mailbox.py:47-55`): git 모드의 틈브스톤 핵은 "ack 삭제가 커밋 안 돼
+  git-restore 가 메시지를 부활시킨다"는 **git-추적 전송** 고유 문제다. 네트워크 백엔드에선 claim/ack 이
+  **DB 행 변이**(네트워크로 커밋)라 git 이 되돌릴 트리 상태가 없다 → claim 이 곧 영구 소비, 틈브스톤 보정
+  **불필요**(§①·§⑤가 external 모드에 대해 이미 내린 결론과 동일). at-least-once 전달(mailbox receive 가
+  메시지를 ≥1회 반환)은 유지되고, claim 의 멱등성(재집음 시 기존 lease 소유자 확인)이 중복 실행을 막는다.
+
+---
+
+## ⑨ 외부 트래커 호환 (Jira · GitHub Issues · Linear)
+
+팀 환경에서 macp 태스크를 기존 트래커와 주고받기 위한 설계 초안(사용자 요구: "Jira 같은 기존 태스크
+관리 시스템과도 호환"). **md 가 정본**([[Decisions/2026-10-13-macp-task-store]])이라는 원칙은 유지하고,
+트래커는 그 **뷰/미러**로 둔다. 이 절은 설계 서술만 — 파서·클라이언트 배선은 §⑥ 지도의 '트래커 어댑터
+leaf'(⑧/⑧b/⑧c)가 맡는다.
+
+### TrackerAdapter 인터페이스 초안
+
+```python
+# docs/design: draft signatures only — §⑥ 지도의 '트래커 어댑터 leaf'(⑧/⑧b/⑧c)가 구현.
+from abc import ABC, abstractmethod
+
+class TrackerAdapter(ABC):
+    """외부 트래커 ↔ 태스크 md 브리지. transport-중립(아래 '혼합 transport' 참조)."""
+
+    @abstractmethod
+    def pull(self, since: str | None = None) -> list["TaskRecord"]:
+        """트래커 → macp(import). since = 증분 커서(트래커 updated_at 또는 webhook 델타).
+        멱등: 같은 external_ref 는 같은 TaskRecord 로(중복 생성 금지, upsert)."""
+
+    @abstractmethod
+    def push(self, task: "TaskRecord") -> str:
+        """macp → 트래커(export). 반환 = external_ref(예: 'jira:PROJ-123').
+        멱등: task 에 external_ref 가 이미 있으면 create 대신 update."""
+
+    @abstractmethod
+    def map_fields(self, remote: dict) -> dict: ...      # 트래커 필드 → frontmatter (아래 필드 매핑표)
+    @abstractmethod
+    def map_status(self, remote_status: str) -> str: ... # 트래커 상태 → task status (아래 상태 매핑표)
+
+# TaskRecord 는 새 저장소가 아니라 import/export 용 DTO — frontmatter dict + 본문 + external_ref.
+# 필드 정의·파서 배선은 후속 leaf. 여기선 설계 서술만.
+```
+
+**혼합 transport**: Jira·GitHub 은 **REST**, Linear 는 **GraphQL 전용**(아래 URL 표)이다. 따라서
+`TrackerAdapter` ABC 는 transport-중립(pull/push 는 중립 `TaskRecord` 를 주고받음)이고, 구상 어댑터가
+각자 전송을 소유한다 — Jira/GitHub 은 REST 클라이언트, Linear 는 GraphQL 클라이언트.
+
+### 필드 → frontmatter 매핑표
+
+| 공통 개념 | Jira (REST v3) | GitHub Issues | Linear (GraphQL) | → 태스크 frontmatter/본문 |
+|---|---|---|---|---|
+| 제목 | `fields.summary` | `title` | `Issue.title` | 본문 H1(`# 제목`) |
+| 설명/본문 | `fields.description`(ADF) | `body`(Markdown) | `Issue.description`(Markdown) | md 본문 |
+| 상태 | `fields.status.name` | `state`(open/closed) | `Issue.state`(workflow state) | `status`(아래 상태표) |
+| 라벨/태그 | `fields.labels[]` | `labels[].name` | `Issue.labels.nodes[].name` | `tags[]` |
+| 마감 | `fields.duedate` | 네이티브 없음(`milestone.due_on` 근사) | `Issue.dueDate` | `due`(YYYY-MM-DD) |
+| 우선순위 | `fields.priority.name` | 네이티브 없음(라벨 관행) | `Issue.priority`(0~4) | `priority`(0~100 정수) |
+| 담당자 | `fields.assignee.accountId` | `assignees[]` | `Issue.assignee` | 미매핑 — 단일 워커 모델이라 '미사용'(필요 시 후속 leaf) |
+| 외부 id | `key`(예 PROJ-123) | `number`(예 owner/repo#45) | `Issue.identifier`(예 ENG-123) | `external_ref`(아래) |
+
+> **본문 포맷 주의**: Jira 설명은 **ADF(Atlassian Document Format, JSON)** 라 md↔ADF 변환이 필요하다
+> (정확한 변환 라이브러리는 **미확인** — 후속 leaf 가 선택). GitHub `body`·Linear `description` 은
+> Markdown 이라 직통.
+
+### 상태 → 매핑표 (태스크 `status` + ledger 관계)
+
+태스크 md 에는 `status: open|done` **2값**만 있고(§① SoT), 오케스트레이션 상태(`assignment.py:18-27`:
+dispatched/accepted/in_progress/done/failed/rejected/awaiting_human/needs_input)는 **별개 공간**(워커가
+돌 때 ledger 에만 산다). **어댑터는 `status` 만 읽고/쓰며 ledger 상태는 건드리지 않는다** — ledger 는 내부
+오케스트레이션이 소유.
+
+| 트래커 상태 | Jira | GitHub | Linear(state.type) | → task `status` | ledger 관계(참고만) |
+|---|---|---|---|---|---|
+| 미착수 | To Do / Open | `open` | `backlog`/`unstarted` | `open` | 아직 ledger 없음(미디스패치) |
+| 진행중 | In Progress | `open`(+assignee) | `started` | `open` | 워커 실행 중이면 `in_progress` |
+| 완료 | Done | `closed`(completed) | `completed` | `done` | `done` |
+| 취소 | Won't Do / Cancelled | `closed`(not_planned) | `canceled` | `done`(+본문/tag 로 cancelled 표기) | `rejected` 유사 |
+
+### 동기화 방향 + 충돌 규칙
+
+- **import(가져오기, pull)**: 트래커 → md. 새 `external_ref` 는 새 `Todo/items/<slug>.md` 생성(배선은
+  후속 leaf), 기존 ref 는 매핑된 필드만 갱신.
+- **export(내보내기, push)**: md → 트래커. 새 태스크는 issue create 후 `external_ref` 기록,
+  `status: done` 은 트래커 close.
+- **양방향**: 위 둘을 주기적으로. **충돌 규칙 = md 우선**([[Decisions/2026-10-13-macp-task-store]]) —
+  트래커는 뷰이므로 동시 분기 편집 시 md 가 이기고 다음 export 가 트래커를 덮어쓴다(§4.2 의 "스냅샷은
+  읽기전용, 권위는 SQLite, 손 편집은 다음 export 가 덮어씀"과 같은 패턴).
+  - (정교화) 팀이 트래커-주도 상태 전이를 원하면 **필드별 소유**: 제목/본문/tags/due/priority = md 소유;
+    `status` 는 **monotonic "done 승격"**(어느 쪽이 done 이면 done, 재오픈은 md 에서만) — 양쪽에서 닫을
+    수 있으되 핑퐁을 막는다. 증분은 updated_at 비교로.
+
+### `external_ref` 저장 위치
+
+- **1차: 태스크 frontmatter 신규 필드 `external_ref`**. 단일 트래커: `external_ref: "jira:PROJ-123"`.
+  다중 provider: provider→id 맵 `external_ref: {jira: "PROJ-123", github: "owner/repo#45"}`. **필드
+  정의는 설계 서술만** — frontmatter 파서/CLI 배선은 후속 leaf(§⑥).
+- **보조(선택)**: external 백엔드에선 ledger `payload_json`(§③ 스키마)에 `external_ref` 를 미러링해
+  네트워크 백엔드의 빠른 역조회(ref→task_id)에 쓸 수 있다. 단 **SoT 는 md frontmatter** — payload 는
+  파생 인덱스.
+
+### webhook vs polling
+
+| 방식 | 지연 | 운영 | 본부 노출 | 오프라인 내성 | 비고 |
+|---|---|---|---|---|---|
+| **polling(1차 권장)** | 높음(주기) | 낮음(크론/워커 틱) | 불필요(아웃바운드만) | 강함(못 닿으면 다음 틱) | git 틱 모델과 동형, 공개 인바운드 엔드포인트 불필요 |
+| webhook | 낮음(실시간) | 높음(공개 수신 엔드포인트 + 서명 검증 + 재시도/중복 처리) | 필요(인바운드 HTTPS) | 약함(놓친 이벤트 재동기 필요) | 실시간 필수일 때만; 놓침 보정용 polling 백스톱 병행 |
+
+**1차 권장 = polling** — 오프라인 내성·공개 인바운드 엔드포인트 불필요가 §⑧의 offline-first 권장
+((a)/(c))과 같은 방향이다. webhook 은 실시간이 꼭 필요할 때만, 반드시 polling 백스톱과 함께.
+
+### API 공식 문서 URL
+
+WebFetch/WebSearch 로 2026-10-22 확인(확인 못 한 칸은 '미확인'):
+
+| 트래커 | API 종류 | 공식 문서 URL | 확인 |
+|---|---|---|---|
+| Jira Cloud | REST v3 (base `/rest/api/3/`, 설명=ADF) | `https://developer.atlassian.com/cloud/jira/platform/rest/v3/intro/` | 확인 |
+| GitHub Issues | REST | `https://docs.github.com/en/rest/issues` | 확인 |
+| Linear | **GraphQL 전용**(REST 아님) | `https://linear.app/developers` | 확인(구 `developers.linear.app/docs/…` 는 이리로 301 리다이렉트) |
+| Linear GraphQL 엔드포인트 | — | `https://api.linear.app/graphql` | **미확인**(개발자 허브는 확인했으나 엔드포인트 URL 을 페이지에 명시 안 함 — 널리 알려진 값) |
 
 ---
 
@@ -356,5 +602,14 @@ leaf ⑥의 자동화 스위트(`test_state_store_git_ops.py`)가 된다.
 3. ledger 는 external 모드에서도 git-추적 `Worker/assignments/` 로 **읽기 전용 스냅샷**
    export(권위 사본은 SQLite) — 본부/대시보드 호환 유지(§④).
 4. todo.db 는 **비이관**(md 의 파생 캐시)(§②§③).
-5. 상시 외부 SaaS DB(Supabase/Neon) **배제**; Cloud SQL 은 선택 각주(§⑥⑦)
+5. 상시 외부 SaaS DB(Supabase/Neon) **배제**; Cloud SQL 은 선택(§⑦ 예약 슬롯 · §⑧ 비교 (b) · §⑥ leaf ⑦)
    ([[Decisions/2026-10-13-macp-task-store]], [[Decisions/2026-09-25-backend-unify-gcp-no-supabase]]).
+6. **원격 접근**(§⑦·§⑧) = 권장 **(a) 본부 HTTP 상태 API + 토큰**(SQLite SoT 는 본부 한 곳; Tailscale
+   테일넷 노출 권장), **(c) git baseline 유지**, **(b) Cloud SQL(~$10~25/월)은 사람-게이트 에스컬레이션**
+   — 실제 네트워크 노출·프로비저닝은 사람 결정. 본부 장애 시 재시도+로컬 아웃박스 flush, claim=lease(TTL)로
+   at-least-once 중복 실행 방지(네트워크 백엔드에선 틈브스톤 불필요).
+7. **외부 트래커**(§⑨) = `TrackerAdapter`(pull/push/map), **md 가 정본**·트래커는 뷰(충돌 시 md 우선),
+   `external_ref` frontmatter 로 연결, **polling 1차**(webhook 은 실시간 필수 시 + 백스톱). Jira(REST v3)·
+   GitHub(REST)·Linear(GraphQL) — 혼합 transport.
+8. ②의 `StateStore` 인터페이스는 **네트워크 백엔드 수용**(동기 호출+내부 타임아웃+공통 예외; `open_mailbox`
+   URI-스킴 seam 으로 "새 스킴 추가" — §② 네트워크 백엔드 수용 점검).
