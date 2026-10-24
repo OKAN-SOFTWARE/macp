@@ -428,7 +428,7 @@ class FakeNode:
 
 
 def _run_smoke(tmp_path, fake, *, cfg=None, remote_cfg=None, budget_usd=0.0,
-               notify=None, now=None):
+               notify=None, now=None, lock_holder=None):
     budget = tmp_path / "budget.json"
     if budget_usd:
         month = (now or dt.datetime.now().astimezone()).strftime("%Y-%m")
@@ -440,7 +440,7 @@ def _run_smoke(tmp_path, fake, *, cfg=None, remote_cfg=None, budget_usd=0.0,
         run=fake, node_script=tmp_path / "app-test-node",
         lock_path=tmp_path / "node.lock", result_root=tmp_path / "results",
         remote_cfg=remote_cfg if remote_cfg is not None else REMOTE_CFG,
-        budget_path=budget, notify=notify, now=now)
+        budget_path=budget, notify=notify, now=now, lock_holder=lock_holder)
 
 
 # --- AC1: success + always-stop --------------------------------------------
@@ -561,3 +561,172 @@ def test_run_smoke_seed_db_injected_before_scenario(tmp_path):
     res = _run_smoke(tmp_path, fake, cfg=cfg)
     assert res["ok"] is True
     assert "seed" in fake.ssh_kinds()                    # run-as cp happened
+
+
+# ===========================================================================
+# Phase 1 (emulator reuse seam) — lock_holder threading, locked flag, logcat agg
+# These keep the beta sweep byte-identical (defaults unchanged) while giving the
+# worker emulator CLI the three seams it needs: an attributable lock holder, a
+# machine-readable "node busy" signal, and the aggregate crash/jank counts.
+# ===========================================================================
+
+import os  # noqa: E402 — grouped with the Phase 1 emulator-seam block
+import socket  # noqa: E402
+
+
+def _advancing():
+    """A FakeNode whose scenario PASSes (title advances within the window)."""
+    return FakeNode(dumps=[_dump("운동하기", "0:30"), _dump("운동하기", "0:30"),
+                           _dump("독서하기", "0:30")])
+
+
+def test_run_smoke_lock_holder_defaults_to_host_pid_and_threads_explicit(tmp_path, monkeypatch):
+    """Default ``lock_holder`` keeps the beta sweep's ``<host>:<pid>`` holder; an
+    explicit holder (the worker run_id) is what gets written into the shared lock
+    file. Spying on the Lease ctor pins the value without racing the release."""
+    seen: list = []
+    RealLease = bs.lease.Lease
+
+    def spy(path, holder=None, ttl=120.0):
+        obj = RealLease(path, holder=holder, ttl=ttl)
+        seen.append(obj)
+        return obj
+
+    monkeypatch.setattr(bs.lease, "Lease", spy)
+    res = _run_smoke(tmp_path, _advancing())
+    assert res["ok"] is True
+    assert seen[-1].holder == f"{socket.gethostname()}:{os.getpid()}"
+    res2 = _run_smoke(tmp_path, _advancing(), lock_holder="20261023T234436-macp-worker-emulator-access")
+    assert res2["ok"] is True
+    assert seen[-1].holder == "20261023T234436-macp-worker-emulator-access"
+
+
+def test_run_smoke_lock_contention_sets_locked_flag(tmp_path):
+    """A live foreign holder → zero node calls, ``kind == "node"`` (byte-identical
+    for maybe_publish), and the additive ``locked`` flag True (emulator CLI → 75)."""
+    squatter = lease.Lease(str(tmp_path / "node.lock"), holder="otherhost:999999", ttl=100_000)
+    assert squatter.acquire()
+    try:
+        fake = FakeNode()
+        res = _run_smoke(tmp_path, fake)
+        assert res["ok"] is False
+        assert res["kind"] == "node"
+        assert res["locked"] is True
+        assert fake.calls == []
+    finally:
+        squatter.release()
+
+
+def test_successful_run_is_not_marked_locked(tmp_path):
+    res = _run_smoke(tmp_path, _advancing())
+    assert res["ok"] is True
+    assert res["locked"] is False
+
+
+def test_scan_logcat_aggregates_counts_and_max_skipped():
+    assert bs.scan_logcat_aggregates("I/App: ok\nD/x: y\n") == {
+        "fatal": 0, "anr": 0, "max_skipped_frames": 0}
+    text = (
+        "I/App: started\n"
+        "E/AndroidRuntime: FATAL EXCEPTION: main\n"
+        "E/AndroidRuntime: FATAL EXCEPTION: bg-thread\n"
+        "E/ActivityManager: ANR in com.mulkko (com.mulkko/.Main)\n"
+        "I/Choreographer: Skipped 30 frames!  The application may be doing too much work.\n"
+        "I/Choreographer: Skipped 120 frames!\n"
+        "I/Choreographer: Skipped 7 frames!\n")
+    assert bs.scan_logcat_aggregates(text) == {"fatal": 2, "anr": 1, "max_skipped_frames": 120}
+    assert bs.scan_logcat_aggregates("") == {"fatal": 0, "anr": 0, "max_skipped_frames": 0}
+    assert bs.scan_logcat_aggregates(None) == {  # type: ignore[arg-type]
+        "fatal": 0, "anr": 0, "max_skipped_frames": 0}
+
+
+def test_scan_logcat_aggregates_uses_same_predicates_as_scan_logcat():
+    """The aggregate's FATAL/ANR counts must agree with scan_logcat's verdict, so
+    a crash the gate FAILs on is the same crash the aggregate reports."""
+    text = "I/App: x\nE/AndroidRuntime: FATAL EXCEPTION: main\n"
+    ok, detail = bs.scan_logcat(text)
+    agg = bs.scan_logcat_aggregates(text)
+    assert ok is False and "FATAL=1" in detail
+    assert agg["fatal"] == 1
+
+
+def test_run_smoke_pass_result_carries_logcat_aggregate(tmp_path):
+    fake = FakeNode(
+        dumps=[_dump("운동하기", "0:30"), _dump("운동하기", "0:30"), _dump("독서하기", "0:30")],
+        logcat="I/App: started\nI/Choreographer: Skipped 42 frames!\nI/App: ok\n")
+    res = _run_smoke(tmp_path, fake)
+    assert res["ok"] is True
+    assert res["logcat"] == {"fatal": 0, "anr": 0, "max_skipped_frames": 42}
+    assert all(isinstance(v, int) for v in res["logcat"].values())
+
+
+def test_run_smoke_crash_result_carries_logcat_aggregate(tmp_path):
+    fake = FakeNode(
+        dumps=[_dump("운동하기", "0:30"), _dump("운동하기", "0:30"), _dump("독서하기", "0:30")],
+        logcat="I/App: started\nE/AndroidRuntime: FATAL EXCEPTION: main\n")
+    res = _run_smoke(tmp_path, fake)
+    assert res["kind"] == "crash"
+    assert res["logcat"]["fatal"] == 1
+
+
+def test_run_smoke_build_failure_logcat_is_empty_dict(tmp_path):
+    """A failure before the device is reachable never scans a logcat, so the
+    aggregate is the stable empty dict, not a missing key."""
+    res = _run_smoke(tmp_path, FakeNode(build_rc=1))
+    assert res["kind"] == "build"
+    assert res["logcat"] == {}
+
+
+def test_archive_creates_missing_result_dir_with_real_git(tmp_path):
+    # 2026-10-24 first real node round-trip: result_dir did not exist yet, so
+    # `git archive -o <result_dir>/src.tar.gz` exited 128 before any node work.
+    import subprocess
+    from todo_system.orchestrator import beta_smoke as bs
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    g = lambda *a: subprocess.run(["git", "-C", str(repo), *a], check=True, capture_output=True)  # noqa: E731
+    g("init", "-q")
+    g("config", "user.email", "t@t")
+    g("config", "user.name", "t")
+    (repo / "f.txt").write_text("x\n")
+    g("add", "f.txt")
+    g("commit", "-qm", "c")
+    sha = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
+                         capture_output=True, text=True, check=True).stdout.strip()
+    result_dir = tmp_path / "results" / f"repo-{sha[:12]}"
+    assert not result_dir.exists()
+    calls = []
+
+    def run(argv, *, cwd=None, env=None, timeout=None):
+        if argv[:2] == ["git", "archive"]:
+            return subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    remote = bs._archive_and_push(run, "node-script", repo, sha, result_dir, {}, 10**9)
+    assert (result_dir / "src.tar.gz").is_file()
+    assert remote
+
+
+def test_node_build_script_lets_the_shell_expand_tilde():
+    # 2026-10-24 real round-trip: `tar -xzf "~/mk-smoke-src.tar.gz"` — a quoted ~
+    # is literal, so the node build died with "Cannot open". The tarball path must
+    # reach the node shell unquoted so ~ expands.
+    from todo_system.orchestrator import beta_smoke as bs
+    seen = []
+
+    def run(argv, *, cwd=None, env=None, timeout=None):
+        seen.append(argv)
+        return subprocess.CompletedProcess(argv, 0, "/x/app-debug.apk\n", "")
+
+    bs._build_debug_apk(run, "node", "a" * 40, "~/mk-smoke-src.tar.gz", {}, {}, 10**9)
+    script = seen[0][-1]
+    assert "tar -xzf ~/mk-smoke-src.tar.gz" in script
+    assert '"~/' not in script
+
+
+def test_aapt2_picks_one_build_tools_version():
+    # 2026-10-24 real round-trip: two build-tools dirs → the glob expanded to two
+    # aapt2 paths and the second was read as a subcommand.
+    from todo_system.orchestrator import beta_smoke as bs
+    assert "tail -1" in bs._AAPT2 and "sort -V" in bs._AAPT2

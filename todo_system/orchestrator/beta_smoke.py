@@ -96,9 +96,18 @@ def _run(argv: list[str], *, cwd: str | None = None, env: dict | None = None,
 def _result(ok: bool, kind: str | None, detail: str, *,
             result_dir: Path | str = "", steps: list | None = None,
             duration_s: float = 0.0, cost_usd: float = 0.0,
-            screenshots: list | None = None) -> dict:
+            screenshots: list | None = None, locked: bool = False,
+            logcat: dict | None = None) -> dict:
     """The canonical :func:`run_smoke` result dict. ``kind`` is ``None`` on PASS,
-    else one of ``scenario`` | ``crash`` | ``node`` | ``build`` | ``budget``."""
+    else one of ``scenario`` | ``crash`` | ``node`` | ``build`` | ``budget``.
+
+    ``locked`` is True ONLY on the lock-acquisition-failure branch (``kind`` stays
+    ``"node"`` so ``beta_publish.maybe_publish`` is byte-identical); the emulator
+    CLI reads it to return exit 75. ``logcat`` is the aggregate crash scan
+    (``fatal`` / ``anr`` / ``max_skipped_frames``) on every exit path that reached
+    the logcat scan, else ``{}`` — a stable shape for the paths that failed before
+    a device was even reachable. All fields are aggregates only: no seed path,
+    screenshot bytes, or dump text (personal-data rule)."""
     return {
         "ok": bool(ok),
         "kind": kind,
@@ -108,6 +117,8 @@ def _result(ok: bool, kind: str | None, detail: str, *,
         "duration_s": round(float(duration_s), 1),
         "cost_usd": round(float(cost_usd), 6),
         "screenshots": screenshots or [],
+        "locked": bool(locked),
+        "logcat": dict(logcat) if logcat else {},
     }
 
 
@@ -301,6 +312,26 @@ def scan_logcat(text: str) -> tuple[bool, str]:
     return True, "no FATAL/ANR"
 
 
+_SKIPPED_FRAMES_RE = re.compile(r"Skipped (\d+) frames")
+
+
+def scan_logcat_aggregates(text: str) -> dict:
+    """Aggregate crash/jank counts for a ``logcat -d`` dump — AGGREGATES ONLY, so
+    the result JSON the worker reports never carries dump text (personal-data
+    rule). Uses the SAME predicates as :func:`scan_logcat`
+    (``FATAL EXCEPTION`` / ``ANR in ``) and the max of any Choreographer
+    ``Skipped N frames`` jank warnings (0 when none). Pure: no device call."""
+    lines = (text or "").splitlines()
+    fatal = sum(1 for ln in lines if "FATAL EXCEPTION" in ln)
+    anr = sum(1 for ln in lines if "ANR in " in ln)
+    max_skipped = 0
+    for ln in lines:
+        m = _SKIPPED_FRAMES_RE.search(ln)
+        if m:
+            max_skipped = max(max_skipped, int(m.group(1)))
+    return {"fatal": fatal, "anr": anr, "max_skipped_frames": max_skipped}
+
+
 # ---------------------------------------------------------------------------
 # Smoke-skip classifier (pure-ish — one git diff via run=) — "once per sweep"
 # ---------------------------------------------------------------------------
@@ -427,7 +458,10 @@ _DEFAULT_POLL_INTERVAL_S = 1.0
 # emulator SDK and the per-sha build dir live under $HOME, mirroring the node
 # script's own `shot` and remote_gate's `$HOME/rg-src`.
 _ADB = "~/android/platform-tools/adb"
-_AAPT2 = "~/android/build-tools/*/aapt2"
+# The newest build-tools' aapt2. A bare `build-tools/*/aapt2` glob expands to
+# EVERY installed version, so the second path became an argument to the first
+# ("unknown subcommand", first real round-trip 2026-10-24).
+_AAPT2 = "$(ls -1d ~/android/build-tools/*/aapt2 | sort -V | tail -1)"
 _DEFAULT_GRADLE_TASK = ":app:assembleDebug"
 
 
@@ -553,6 +587,9 @@ def _archive_and_push(run: Runner, node_script: Path | str, repo_dir: Path | str
     """``git archive`` the merged sha locally, ship the tarball to the node, and
     return the node-side tarball path. Infra failure → ``SmokeError("node")``."""
     tar = result_dir / "src.tar.gz"
+    # `git archive -o` does not create parent dirs: without this the first smoke of
+    # every new sha failed with rc=128 (found by the first real round-trip, 10-24).
+    Path(result_dir).mkdir(parents=True, exist_ok=True)
     a = run(["git", "archive", "--format=tar.gz", "-o", str(tar), sha],
             cwd=str(repo_dir), timeout=_remaining(deadline))
     if getattr(a, "returncode", 1) != 0:
@@ -562,6 +599,19 @@ def _archive_and_push(run: Runner, node_script: Path | str, repo_dir: Path | str
     if getattr(p, "returncode", 1) != 0:
         raise SmokeError("node", f"tar push 실패 (rc={getattr(p, 'returncode', None)})")
     return remote_tar
+
+
+def _save_build_log(env: dict, cp, keep: int = 80, name: str = "build.log") -> None:
+    """Keep the last ``keep`` lines of a failed node build in ``<result_dir>/build.log``
+    (beside screens/, never in the result JSON) so a red build can be diagnosed
+    without another paid node round-trip. Best-effort."""
+    try:
+        out = Path(env.get("APP_TEST_OUT", ".")).parent / name
+        out.parent.mkdir(parents=True, exist_ok=True)
+        text = ((getattr(cp, "stdout", "") or "") + "\n" + (getattr(cp, "stderr", "") or ""))
+        out.write_text("\n".join(text.splitlines()[-keep:]) + "\n", encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _build_debug_apk(run: Runner, node_script: Path | str, sha: str, remote_tar: str,
@@ -574,13 +624,16 @@ def _build_debug_apk(run: Runner, node_script: Path | str, sha: str, remote_tar:
     script = (
         "set -e; "
         f'd="{bdir}"; mkdir -p "$d"; '
-        f'tar -xzf "{remote_tar}" -C "$d"; cd "$d"; '
+        # Unquoted on purpose: remote_tar starts with `~/`, which the node shell
+        # expands only outside quotes (quoted, tar looked for a literal "~" dir).
+        f'tar -xzf {remote_tar} -C "$d"; cd "$d"; '
         'printf "sdk.dir=%s\\n" "$HOME/android" > local.properties; '
         f'./gradlew {task} --no-daemon; '
         "find \"$d\" -path '*/build/outputs/apk/*' -name '*debug*.apk' | head -1")
     b = _ssh(run, node_script, script, env=env, timeout=_remaining(deadline))
     if getattr(b, "returncode", 1) != 0:
-        raise SmokeError("build", f"debug 빌드 실패 (rc={getattr(b, 'returncode', None)})")
+        _save_build_log(env, b)
+        raise SmokeError("build", f"debug 빌드 실패 (rc={getattr(b, 'returncode', None)}) — build.log")
     apk = _last_line(b)
     if not apk.endswith(".apk"):
         raise SmokeError("build", "debug APK 산출물 없음")
@@ -602,7 +655,8 @@ def _install_and_launch(run: Runner, node_script: Path | str, apk: str,
         'echo "$pkg"')
     r = _ssh(run, node_script, script, env=env, timeout=_remaining(deadline))
     if getattr(r, "returncode", 1) != 0:
-        raise SmokeError("node", f"설치/실행 실패 (rc={getattr(r, 'returncode', None)})")
+        _save_build_log(env, r, name="install.log")
+        raise SmokeError("node", f"설치/실행 실패 (rc={getattr(r, 'returncode', None)}) — install.log")
     return _last_line(r) or pkg
 
 
@@ -677,19 +731,24 @@ def _run_scenario(run: Runner, node_script: Path | str, smoke_cfg: dict, env: di
 
 
 def _scan_node_logcat(run: Runner, node_script: Path | str, env: dict,
-                      deadline: float) -> tuple[bool, str]:
+                      deadline: float) -> tuple[bool, str, dict]:
     """Pull ``logcat -d`` from the node and scan for FATAL/ANR (aggregates only).
-    A logcat fetch failure is treated as clean (``True``) — the scenario verdict
-    is the primary signal, and a torn logcat must not fail a passing run."""
+    Returns ``(ok, detail, aggregates)`` where ``aggregates`` is the
+    :func:`scan_logcat_aggregates` dict for the SAME fetched text (``{}`` when no
+    logcat could be fetched). A logcat fetch failure is treated as clean
+    (``True``) — the scenario verdict is the primary signal, and a torn logcat
+    must not fail a passing run."""
     try:
         r = _ssh(run, node_script, f"{_ADB} logcat -d", env=env, timeout=_remaining(deadline))
     except subprocess.TimeoutExpired:
         raise
     except Exception:       # noqa: BLE001 — a logcat fetch fault is not a crash verdict
-        return True, "logcat 수집 실패 — 생략"
+        return True, "logcat 수집 실패 — 생략", {}
     if getattr(r, "returncode", 1) != 0:
-        return True, "logcat 수집 실패 — 생략"
-    return scan_logcat(getattr(r, "stdout", "") or "")
+        return True, "logcat 수집 실패 — 생략", {}
+    text = getattr(r, "stdout", "") or ""
+    ok, detail = scan_logcat(text)
+    return ok, detail, scan_logcat_aggregates(text)
 
 
 def _pull_screens(run: Runner, node_script: Path | str, result_dir: Path, env: dict,
@@ -753,7 +812,7 @@ def _run_locked(repo_name: str, repo_dir: Path | str, sha: str, smoke_cfg: dict,
             pkg = _install_and_launch(run, node_script, apk, smoke_cfg, env, deadline)
             _seed_db(run, node_script, pkg, smoke_cfg, result_dir, env, deadline)
             sc_ok, sc_kind, sc_detail = _run_scenario(run, node_script, smoke_cfg, env, deadline, steps)
-            lc_ok, lc_detail = _scan_node_logcat(run, node_script, env, deadline)
+            lc_ok, lc_detail, lc_agg = _scan_node_logcat(run, node_script, env, deadline)
             screenshots = _pull_screens(run, node_script, result_dir, env, deadline)
         finally:
             _stop_node(run, node_script, env, progress)
@@ -766,10 +825,13 @@ def _run_locked(repo_name: str, repo_dir: Path | str, sha: str, smoke_cfg: dict,
         return _result(False, "node", f"노드 오류: {type(e).__name__}",
                        result_dir=result_dir, steps=steps, screenshots=screenshots)
     if not sc_ok:
-        return _result(False, sc_kind, sc_detail, result_dir=result_dir, steps=steps, screenshots=screenshots)
+        return _result(False, sc_kind, sc_detail, result_dir=result_dir, steps=steps,
+                       screenshots=screenshots, logcat=lc_agg)
     if not lc_ok:
-        return _result(False, "crash", lc_detail, result_dir=result_dir, steps=steps, screenshots=screenshots)
-    return _result(True, None, "smoke PASS", result_dir=result_dir, steps=steps, screenshots=screenshots)
+        return _result(False, "crash", lc_detail, result_dir=result_dir, steps=steps,
+                       screenshots=screenshots, logcat=lc_agg)
+    return _result(True, None, "smoke PASS", result_dir=result_dir, steps=steps,
+                   screenshots=screenshots, logcat=lc_agg)
 
 
 def _write_result(result_dir: Path, result: dict) -> None:
@@ -788,7 +850,8 @@ def run_smoke(repo_name: str, repo_dir: Path | str, sha: str, config: dict, *,
               remote_cfg: dict | None = None, budget_path: Path | str = remote_gate.BUDGET_PATH,
               notify: Callable[[str], None] | None = None,
               progress: Callable[[str], None] = lambda _m: None,
-              cap_s: int | None = None, now: "dt.datetime | None" = None) -> dict:
+              cap_s: int | None = None, now: "dt.datetime | None" = None,
+              lock_holder: str | None = None) -> dict:
     """Run the emulator smoke gate for ``sha`` and return the result dict. NEVER
     raises — a non-PASS is a result, not an exception, so ``maybe_publish`` treats
     a failure as a handled abort (deploy withheld, merge stands).
@@ -800,7 +863,14 @@ def run_smoke(repo_name: str, repo_dir: Path | str, sha: str, config: dict, *,
     ZERO node calls and one throttled monthly alert — the caller then STILL
     distributes (a cost ceiling must not block a month of betas). Every other exit
     stops the node in an inner ``finally`` (AC1) and records the VM-seconds cost in
-    the shared ledger. Every external effect flows through ``run=``."""
+    the shared ledger. Every external effect flows through ``run=``.
+
+    ``lock_holder`` overrides the lease holder id (default ``<host>:<pid>``): the
+    beta sweep passes nothing and keeps that default, while the worker emulator
+    CLI passes its run_id so a stage's take of the SAME physical node lock is
+    attributable. The holder never changes WHICH file is locked, so the beta
+    sweep and a worker run still serialize on the one node and can never
+    co-drive it."""
     now = now or dt.datetime.now().astimezone()
     notify = notify or _default_notify
     remote_cfg = remote_cfg if remote_cfg is not None else remote_gate.load_remote_config()
@@ -808,9 +878,10 @@ def run_smoke(repo_name: str, repo_dir: Path | str, sha: str, config: dict, *,
     cap = cap_s if cap_s is not None else cap_seconds(config)
     result_dir = Path(result_root) / f"{repo_name}-{sha[:12]}"
 
-    lock = lease.Lease(str(lock_path), ttl=cap + _LOCK_MARGIN)
+    lock = lease.Lease(str(lock_path), holder=lock_holder, ttl=cap + _LOCK_MARGIN)
     if not lock.acquire():
-        return _result(False, "node", "노드 사용 중 — 락 획득 실패", result_dir=result_dir)
+        return _result(False, "node", "노드 사용 중 — 락 획득 실패",
+                       result_dir=result_dir, locked=True)
     try:
         # Budget veto — don't even start a node when the month is over cap.
         if remote_gate.budget_exhausted(remote_cfg, now, path=budget_path):
